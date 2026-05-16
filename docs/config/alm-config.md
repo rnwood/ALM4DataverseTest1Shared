@@ -134,27 +134,24 @@ Increase this value if solution imports time out in large or complex environment
 >
 > `importTimeoutSeconds` only controls the timeout inside the deployment script. Azure DevOps also enforces its own **job-level timeout** (`timeoutInMinutes`) which will kill the entire job if it is reached, regardless of `importTimeoutSeconds`.
 >
-> The pipeline templates do not set `timeoutInMinutes`, so the Azure DevOps account default applies:
+> All pipeline templates (`DEPLOY`, `IMPORT`, `BUILD`, `EXPORT`) already set `timeoutInMinutes: 360` — the maximum allowed on Microsoft-hosted agents. This covers the majority of large solution imports. The limits per capacity type are:
 >
-> | Capacity type | Default job timeout | Maximum configurable |
+> | Capacity type | Effective job timeout | Notes |
 > |---|---|---|
-> | **Free / Microsoft-hosted (public project)** | 60 minutes | 360 minutes (6 hours) |
-> | **Free / Microsoft-hosted (private project)** | 60 minutes | 360 minutes (6 hours) |
-> | **Paid parallel jobs (Microsoft-hosted)** | 360 minutes (6 hours) | 360 minutes (6 hours) |
-> | **Self-hosted agents** | 60 minutes | No enforced maximum |
+> | **Free / Microsoft-hosted** | Up to 360 minutes (6 hours) | Parallel jobs are limited; 360 min is the ceiling |
+> | **Paid parallel jobs (Microsoft-hosted)** | Up to 360 minutes (6 hours) | 360 min is the ceiling regardless of paid tier |
+> | **Self-hosted agents** | No enforced maximum | Configure `timeoutInMinutes` (or remove it) as needed |
 >
-> If your `importTimeoutSeconds` exceeds the effective job timeout, the job will be killed by Azure DevOps first and `importTimeoutSeconds` will have no effect for that run. To avoid this, set `timeoutInMinutes` on the relevant deployment job in your pipeline YAML to at least `importTimeoutSeconds / 60` plus a small overhead for tool installation and connection steps.
->
-> Example — extending the job timeout in `DEPLOY-main.yml`:
+> The `DEPLOY` template also exposes `timeoutInMinutes` as a parameter so you can lower it per-environment if desired:
 >
 > ```yaml
 > - template: pipelines/templates/stages/deploy-environment.yml@ALM4Dataverse
 >   parameters:
 >     environmentName: Test-main
->     timeoutInMinutes: 200  # must be >= importTimeoutSeconds / 60
+>     timeoutInMinutes: 120  # override the 360-minute default for this environment
 > ```
 >
-> Note: even with paid capacity, Microsoft-hosted agents are capped at 360 minutes. For imports that genuinely need more than 6 hours, use a **self-hosted agent** where no maximum is enforced.
+> For imports that genuinely need more than 6 hours, switch to a **self-hosted agent** — there is no enforced maximum on self-hosted agents.
 
 #### What to do after a timeout
 

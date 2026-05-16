@@ -9,6 +9,7 @@ stages:
     jobs:
       - job: ExportJob
         displayName: 'Export'
+        timeoutInMinutes: 360  # maximum allowed on Microsoft-hosted agents (free and paid)
         steps:
         - checkout: self
           persistCredentials: true

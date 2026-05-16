@@ -3,7 +3,7 @@ parameters:
     type: string
   - name: timeoutInMinutes
     type: number
-    default: 0  # 0 = use Azure DevOps account default (60 min free, 360 min paid)
+    default: 360  # maximum allowed on Microsoft-hosted agents (free and paid)
 
 stages:
   - stage: Deploy_${{ replace(replace(replace(replace(replace(replace(parameters.environmentName, ' ', '_'), '-', '_'), '.', '_'), '(', '_'), ')', '_'), '/', '_') }}
