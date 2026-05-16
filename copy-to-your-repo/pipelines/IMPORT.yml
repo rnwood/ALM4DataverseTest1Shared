@@ -15,4 +15,3 @@ stages:
 - template: pipelines/templates/import.yml@ALM4Dataverse
   parameters:
     useAlm4DataverseExtension: true
-    environmentUrl: $(EnvironmentUrl)

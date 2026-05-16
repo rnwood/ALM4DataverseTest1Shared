@@ -1381,7 +1381,8 @@ function Sync-CopyToYourRepoIntoGitRepo {
             }
             elseif (-not $UseAlm4DataverseExtension -and $normalizedRelativePath -in @('pipelines/EXPORT.yml', 'pipelines/IMPORT.yml')) {
                 $content = Get-Content -LiteralPath $file.FullName -Raw
-                $content = $content -replace '(?m)^(\s*useAlm4DataverseExtension:\s*)true\s*$', '${1}false'
+                $replacement = '${1}false' + "`n" + '    environmentUrl: $(EnvironmentUrl)'
+                $content = $content -replace '(?m)^(\s*useAlm4DataverseExtension:\s*)true\s*$', $replacement
 
                 $tempFile = [System.IO.Path]::GetTempFileName()
                 $content | Set-Content -LiteralPath $tempFile -NoNewline
@@ -3536,7 +3537,9 @@ function Update-DeployPipelineInMainRepo {
             $newStages += "    parameters:`n"
             $newStages += "      environmentName: $($env.ShortName)`n"
             $newStages += "      useAlm4DataverseExtension: $($UseAlm4DataverseExtension.ToString().ToLowerInvariant())`n"
-            $newStages += "      environmentUrl: `$(EnvironmentUrl)`n"
+            if (-not $UseAlm4DataverseExtension) {
+                $newStages += "      environmentUrl: `$(EnvironmentUrl)`n"
+            }
         }
 
         Add-Content -LiteralPath $deployYamlPath -Value $newStages

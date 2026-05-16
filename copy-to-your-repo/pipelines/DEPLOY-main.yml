@@ -25,4 +25,3 @@ stages:
   #   parameters:
   #     environmentName: Test-main
   #     useAlm4DataverseExtension: true
-  #     environmentUrl: $(EnvironmentUrl)

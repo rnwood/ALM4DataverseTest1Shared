@@ -21,4 +21,3 @@ stages:
   parameters:
     commitMessage: ${{ parameters.commitMessage }}
     useAlm4DataverseExtension: true
-    environmentUrl: $(EnvironmentUrl)
