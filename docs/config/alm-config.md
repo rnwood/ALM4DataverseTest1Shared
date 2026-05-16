@@ -134,15 +134,16 @@ Increase this value if solution imports time out in large or complex environment
 >
 > `importTimeoutSeconds` only controls the timeout inside the deployment script. Azure DevOps also enforces its own **job-level timeout** (`timeoutInMinutes`) which will kill the entire job if it is reached, regardless of `importTimeoutSeconds`.
 >
-> All pipeline templates (`DEPLOY`, `IMPORT`, `BUILD`, `EXPORT`) already set `timeoutInMinutes: 360` — the maximum allowed on Microsoft-hosted agents. This covers the majority of large solution imports. The limits per capacity type are:
+> All pipeline templates (`DEPLOY`, `IMPORT`, `BUILD`, `EXPORT`) set `timeoutInMinutes: 360`. Azure DevOps enforces your account's capacity limits on top of this value — on free capacity the effective limit is lower, but setting a higher value causes no harm; the job simply falls back to the account's enforced limit:
 >
-> | Capacity type | Effective job timeout | Notes |
-> |---|---|---|
-> | **Free / Microsoft-hosted** | Up to 360 minutes (6 hours) | Parallel jobs are limited; 360 min is the ceiling |
-> | **Paid parallel jobs (Microsoft-hosted)** | Up to 360 minutes (6 hours) | 360 min is the ceiling regardless of paid tier |
-> | **Self-hosted agents** | No enforced maximum | Configure `timeoutInMinutes` (or remove it) as needed |
+> | Capacity type | Effective job timeout |
+> |---|---|
+> | **Free Microsoft-hosted (public project)** | Up to 60 minutes (falls back to account default if `timeoutInMinutes` exceeds it) |
+> | **Free Microsoft-hosted (private project)** | Up to 60 minutes (falls back to account default if `timeoutInMinutes` exceeds it) |
+> | **Paid parallel jobs (Microsoft-hosted)** | Up to 360 minutes (6 hours) |
+> | **Self-hosted agents** | No enforced maximum |
 >
-> The `DEPLOY` template also exposes `timeoutInMinutes` as a parameter so you can lower it per-environment if desired:
+> The `DEPLOY` template exposes `timeoutInMinutes` as a parameter so you can override the default per-environment:
 >
 > ```yaml
 > - template: pipelines/templates/stages/deploy-environment.yml@ALM4Dataverse
