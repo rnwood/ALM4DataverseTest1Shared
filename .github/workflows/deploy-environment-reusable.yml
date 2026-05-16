@@ -30,6 +30,10 @@ name: Deploy to Environment (Reusable)
 #      environment variables can be supplied as JSON objects.
 #      NOTE: No approval/gate mechanism is available without environment protection
 #      rules (see docs/setup/github-setup.md for details).
+#
+# DEPLOYMENT GATES (GitHub Free compatible):
+#   Use required-gate-tag and success-gate-tag to enforce ordered deployments
+#   without environment protection rules.  See docs/setup/github-setup.md.
 
 on:
   workflow_call:
@@ -72,6 +76,27 @@ on:
           values.  Example: {"contoso_APIEndpoint": "https://api.contoso.com"}.
           Only needed when NOT using GitHub environment variables named
           DataverseEnvVar_<schema_name>.
+      required-gate-tag:
+        type: string
+        default: ''
+        description: >
+          Git tag that must exist in this repository before deployment proceeds.
+          If set and the tag is absent the workflow fails immediately with a clear
+          error message.  Use the success-gate-tag from a previous environment's
+          deployment job to enforce ordered promotion without environment protection
+          rules (GitHub Free compatible).
+          Recommended format: deployed/{previous-environment-name}/{build-run-id}
+          Example: deployed/TEST-main/9876543210
+      success-gate-tag:
+        type: string
+        default: ''
+        description: >
+          Git tag to push after this deployment completes successfully.
+          Other DEPLOY workflows reference it as their required-gate-tag to prove
+          this stage was successfully completed before they proceed.
+          Recommended format: deployed/{environment-name}/{build-run-id}
+          Example: deployed/TEST-main/9876543210
+          Requires the calling workflow job to have contents: write permission.
       alm-repository:
         type: string
         default: 'ALM4Dataverse/ALM4Dataverse'
@@ -111,6 +136,7 @@ jobs:
     environment: ${{ inputs.environment-name }}
     permissions:
       actions: read    # required to download artifacts from another workflow run
+      contents: write  # required to push success-gate-tag after deployment
       id-token: write  # request OIDC token for Workload Identity Federation
     env:
       AZURE_CLIENT_ID:     ${{ secrets.azure-client-id     || secrets.AZURE_CLIENT_ID }}
@@ -125,6 +151,39 @@ jobs:
       DATAVERSE_ENV_VARS:        ${{ inputs.dataverse-env-vars }}
 
     steps:
+      - name: Check deployment gate tag
+        if: inputs.required-gate-tag != ''
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # Verify the previous environment's success-gate-tag exists before proceeding.
+          # This enforces ordered deployment promotion without environment protection rules.
+          $gateTag    = '${{ inputs.required-gate-tag }}'
+          $encodedTag = [Uri]::EscapeDataString($gateTag)
+          $apiBase    = "https://api.github.com/repos/$($env:GITHUB_REPOSITORY)"
+          $headers    = @{
+            Authorization = "Bearer $($env:GITHUB_TOKEN)"
+            Accept        = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+          Write-Host "Checking for required gate tag: $gateTag"
+          try {
+            Invoke-RestMethod -Uri "$apiBase/git/ref/tags/$encodedTag" -Headers $headers | Out-Null
+            Write-Host "✅ Gate tag '$gateTag' found — proceeding with deployment."
+          } catch {
+            $status = $_.Exception.Response.StatusCode.value__
+            if ($status -eq 404) {
+              Write-Error (
+                "Deployment gate check FAILED: the tag '$gateTag' does not exist.`n" +
+                "This means the prerequisite environment has not been successfully deployed for this build.`n" +
+                "Deploy to the previous environment first, then re-trigger this workflow.")
+            } else {
+              Write-Error "Unexpected error checking gate tag '$gateTag': $_"
+            }
+            exit 1
+          }
+
       - name: Download build artifacts
         uses: actions/download-artifact@v4.1.3
         with:
@@ -185,3 +244,43 @@ jobs:
           & "./alm/pipelines/scripts/installdependencies.ps1"
           & "./alm/pipelines/scripts/connect.ps1" -Url $env:DATAVERSE_URL
           & "./alm/pipelines/scripts/deploy.ps1" -ArtifactsPath "."
+
+      - name: Push success gate tag
+        if: inputs.success-gate-tag != ''
+        shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          # Record a permanent, auditable marker that this environment was successfully
+          # deployed for this build.  The next environment's workflow checks for this
+          # tag via required-gate-tag before it is allowed to proceed.
+          $successTag = '${{ inputs.success-gate-tag }}'
+          $buildRunId = '${{ inputs.build-run-id }}'
+          $apiBase    = "https://api.github.com/repos/$($env:GITHUB_REPOSITORY)"
+          $headers    = @{
+            Authorization = "Bearer $($env:GITHUB_TOKEN)"
+            Accept        = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+
+          # Resolve the HEAD commit SHA of the originating BUILD run.
+          Write-Host "Resolving HEAD SHA for BUILD run $buildRunId..."
+          $run = Invoke-RestMethod -Uri "$apiBase/actions/runs/$buildRunId" -Headers $headers
+          $sha = $run.head_sha
+          Write-Host "HEAD SHA: $sha"
+
+          # Create the lightweight tag ref.
+          $body = @{ ref = "refs/tags/$successTag"; sha = $sha } | ConvertTo-Json
+          Write-Host "Pushing gate tag: $successTag"
+          try {
+            Invoke-RestMethod -Method POST -Uri "$apiBase/git/refs" -Headers $headers -Body $body | Out-Null
+            Write-Host "✅ Gate tag '$successTag' pushed successfully."
+          } catch {
+            $status = $_.Exception.Response.StatusCode.value__
+            if ($status -eq 422) {
+              Write-Host "ℹ️  Gate tag '$successTag' already exists (re-run?) — skipping."
+            } else {
+              Write-Error "Failed to push gate tag '$successTag': $_"
+              exit 1
+            }
+          }

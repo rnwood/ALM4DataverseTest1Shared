@@ -116,10 +116,13 @@ your-repo/
 │       ├── BUILD.yml
 │       ├── EXPORT.yml
 │       ├── IMPORT.yml
-│       └── DEPLOY-main.yml
+│       ├── DEPLOY-main.yml   ← auto-deploys to TEST; records gate tag on success
+│       └── DEPLOY-prod.yml   ← manual-only; verifies TEST gate tag before deploying
 ├── alm-config.psd1
 └── data/
 ```
+
+Rename or copy additional `DEPLOY-{env}.yml` files if you have more stages (UAT, etc.).
 
 ### Configure `alm-config.psd1`
 
@@ -136,12 +139,13 @@ Edit `alm-config.psd1` to list the solutions you want to manage:
 
 ### Configure deployment environments in `DEPLOY-main.yml`
 
-Open `.github/workflows/DEPLOY-main.yml` and uncomment the deployment job blocks for
-each environment you want to deploy to. Choose one of the two credential approaches
-described in the next section.
+Open `.github/workflows/DEPLOY-main.yml` — it auto-deploys to your **first** environment
+(TEST) after BUILD succeeds.  Subsequent environments (UAT, PROD) are deployed by
+triggering `DEPLOY-prod.yml` (or similar) manually.  See the
+[Deployment gates for GitHub Free](#deployment-gates-for-github-free) section for the full picture.
 
 If your default branch is not `main`:
-- Rename the file to `DEPLOY-{branchname}.yml`
+- Rename `DEPLOY-main.yml` to `DEPLOY-{branchname}.yml`
 - Update the `branches:` filter in the `workflow_run` trigger
 
 ---
@@ -206,9 +210,9 @@ In the environment settings, you can add:
 > Public repositories can use protection rules on any plan.
 > See [GitHub licence limitations](#github-licence-limitations) below.
 
-#### 1.4 Configure your DEPLOY workflow (WIF)
+#### 1.4 Configure your DEPLOY workflows (WIF)
 
-In `DEPLOY-main.yml`, use the "Approach 1/2" blocks (uncomment and adjust):
+**`DEPLOY-main.yml`** (auto-deploys to TEST, records gate tag):
 
 ```yaml
 jobs:
@@ -217,28 +221,46 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     uses: ALM4Dataverse/ALM4Dataverse/.github/workflows/deploy-environment-reusable.yml@stable
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
     with:
       environment-name: TEST-main
       build-run-id: >-
         ${{ github.event_name == 'workflow_dispatch'
               && inputs.build-run-id
               || github.event.workflow_run.id }}
-    secrets: inherit   # passes AZURE_CLIENT_ID, AZURE_TENANT_ID (no client secret needed)
-
-  deploy-prod:
-    needs: deploy-test
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
-    uses: ALM4Dataverse/ALM4Dataverse/.github/workflows/deploy-environment-reusable.yml@stable
-    with:
-      environment-name: PROD
-      build-run-id: >-
-        ${{ github.event_name == 'workflow_dispatch'
+      success-gate-tag: >-
+        deployed/TEST-main/${{ github.event_name == 'workflow_dispatch'
               && inputs.build-run-id
               || github.event.workflow_run.id }}
+    secrets: inherit   # passes AZURE_CLIENT_ID, AZURE_TENANT_ID (no client secret needed)
+```
+
+**`DEPLOY-prod.yml`** (manual-only, verifies TEST gate tag before deploying):
+
+```yaml
+jobs:
+  deploy-prod:
+    uses: ALM4Dataverse/ALM4Dataverse/.github/workflows/deploy-environment-reusable.yml@stable
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+    with:
+      environment-name: PROD
+      build-run-id: ${{ inputs.build-run-id }}
+      required-gate-tag: deployed/TEST-main/${{ inputs.build-run-id }}
+      success-gate-tag:  deployed/PROD/${{ inputs.build-run-id }}
     secrets: inherit
 ```
+
+See [Deployment gates for GitHub Free](#deployment-gates-for-github-free) for details.
+
+> ⚠️ If using GitHub Pro/Team/Enterprise you can alternatively keep all environments
+> in `DEPLOY-main.yml` chained with `needs:` and rely on environment protection rules
+> for approval gates instead of the gate tag mechanism.
 
 ---
 
@@ -277,10 +299,10 @@ Example:
 | `DataverseConnRef_contoso_sharedsharepointonline` | `12345678-1234-1234-1234-123456789abc` |
 | `DataverseEnvVar_contoso_APIEndpoint` | `https://api.test.contoso.com` |
 
-#### 2.3 Configure your DEPLOY workflow (client secret)
+#### 2.3 Configure your DEPLOY workflows (client secret)
 
-The YAML is identical to Approach 1 — `secrets: inherit` passes both
-`AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` (see [1.4](#14-configure-your-deploy-workflow-wif)).
+The YAML structure is identical to Approach 1 — `secrets: inherit` passes both
+`AZURE_CLIENT_ID` and `AZURE_CLIENT_SECRET` (see [1.4](#14-configure-your-deploy-workflows-wif)).
 
 ---
 
@@ -331,9 +353,9 @@ For dev environments used in EXPORT/IMPORT, use a prefix like `DEV_MAIN_`.
 }
 ```
 
-#### 3.2 Configure your DEPLOY workflow (prefixed secrets)
+#### 3.2 Configure your DEPLOY workflows (prefixed secrets)
 
-In `DEPLOY-main.yml`, use the "Approach 3" blocks (uncomment and adjust):
+**`DEPLOY-main.yml`** (auto-deploys to TEST, records gate tag):
 
 ```yaml
 jobs:
@@ -342,6 +364,10 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     uses: ALM4Dataverse/ALM4Dataverse/.github/workflows/deploy-environment-reusable.yml@stable
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
     with:
       environment-name: TEST-main
       build-run-id: >-
@@ -351,12 +377,107 @@ jobs:
       dataverse-url:             ${{ vars.TEST_MAIN_DATAVERSE_URL }}
       dataverse-connection-refs: ${{ vars.TEST_MAIN_DATAVERSE_CONN_REFS }}
       dataverse-env-vars:        ${{ vars.TEST_MAIN_DATAVERSE_ENV_VARS }}
+      success-gate-tag: >-
+        deployed/TEST-main/${{ github.event_name == 'workflow_dispatch'
+              && inputs.build-run-id
+              || github.event.workflow_run.id }}
     secrets:
       azure-client-id:               ${{ secrets.TEST_MAIN_AZURE_CLIENT_ID }}
       azure-client-secret:           ${{ secrets.TEST_MAIN_AZURE_CLIENT_SECRET }}
       azure-tenant-id:               ${{ secrets.TEST_MAIN_AZURE_TENANT_ID }}
       dataverse-service-account-upn: ${{ secrets.TEST_MAIN_DATAVERSE_SERVICE_ACCOUNT_UPN }}
 ```
+
+**`DEPLOY-prod.yml`** (manual-only, verifies TEST gate tag before deploying):
+
+```yaml
+jobs:
+  deploy-prod:
+    uses: ALM4Dataverse/ALM4Dataverse/.github/workflows/deploy-environment-reusable.yml@stable
+    permissions:
+      actions: read
+      contents: write
+      id-token: write
+    with:
+      environment-name: PROD
+      build-run-id: ${{ inputs.build-run-id }}
+      required-gate-tag: deployed/TEST-main/${{ inputs.build-run-id }}
+      success-gate-tag:  deployed/PROD/${{ inputs.build-run-id }}
+      dataverse-url:             ${{ vars.PROD_DATAVERSE_URL }}
+      dataverse-connection-refs: ${{ vars.PROD_DATAVERSE_CONN_REFS }}
+      dataverse-env-vars:        ${{ vars.PROD_DATAVERSE_ENV_VARS }}
+    secrets:
+      azure-client-id:               ${{ secrets.PROD_AZURE_CLIENT_ID }}
+      azure-client-secret:           ${{ secrets.PROD_AZURE_CLIENT_SECRET }}
+      azure-tenant-id:               ${{ secrets.PROD_AZURE_TENANT_ID }}
+      dataverse-service-account-upn: ${{ secrets.PROD_DATAVERSE_SERVICE_ACCOUNT_UPN }}
+```
+
+---
+
+## Deployment Gates for GitHub Free
+
+On GitHub Free (private repos), environment protection rules — and therefore
+mandatory approval gates — are not available.  ALM4Dataverse provides a **git tag
+gate mechanism** that enforces ordered promotion and prevents automatic runaway
+deployments without using any time-limited construct.
+
+### How it works
+
+```
+BUILD (auto) → DEPLOY-main (auto → TEST only) → [human decision] → DEPLOY-prod (manual → PROD)
+```
+
+1. **BUILD** runs automatically on every push to `main`.
+2. **DEPLOY-main** auto-triggers when BUILD succeeds and deploys to **TEST only**.
+   On success it pushes a lightweight git tag:
+   ```
+   deployed/TEST-main/{build-run-id}
+   ```
+3. A team member inspects the TEST deployment, then manually triggers **DEPLOY-prod**
+   by going to **Actions** > **DEPLOY-prod** > **Run workflow** and entering the BUILD run ID.
+4. **DEPLOY-prod** first checks via the GitHub API whether the gate tag
+   `deployed/TEST-main/{build-run-id}` exists.  If it doesn't — because TEST never
+   succeeded for that build — the workflow **fails immediately** with a clear error:
+   > *Deployment gate check FAILED: the tag `deployed/TEST-main/12345678` does not exist.
+   > Deploy to the previous environment first, then re-trigger this workflow.*
+5. If the tag is present, deployment proceeds and on success pushes:
+   ```
+   deployed/PROD/{build-run-id}
+   ```
+
+The gate tags serve as a **permanent, auditable trail** of which build was deployed
+to which environment and in what order.
+
+### Key properties
+
+| Property | Detail |
+|---|---|
+| No time limits | Gate tags are permanent — they don't expire |
+| Ordered promotion enforced | Cannot deploy to PROD without a successful TEST deployment for the same build |
+| No automatic cascade | Each higher-environment workflow is `workflow_dispatch` only — a human must actively trigger it |
+| GitHub Free compatible | Uses only `contents: write` permission and the GitHub REST API |
+| Works with all credential approaches | WIF, client secret, or prefixed global secrets |
+
+### Adding more stages (UAT)
+
+To add a UAT stage between TEST and PROD, create `DEPLOY-uat.yml` following the
+same pattern as `DEPLOY-prod.yml`, but with:
+```yaml
+required-gate-tag: deployed/TEST-main/${{ inputs.build-run-id }}
+success-gate-tag:  deployed/UAT-main/${{ inputs.build-run-id }}
+```
+Then update `DEPLOY-prod.yml` to check the UAT gate instead:
+```yaml
+required-gate-tag: deployed/UAT-main/${{ inputs.build-run-id }}
+```
+
+### GitHub Pro/Team/Enterprise alternative
+
+If you have environment protection rules available, you can instead:
+- Keep all environments in `DEPLOY-main.yml` chained with `needs:`
+- Add **Required reviewers** to each environment in Settings > Environments
+- Omit `required-gate-tag` / `success-gate-tag` entirely (protection rules enforce the gate)
 
 ---
 
@@ -368,6 +489,7 @@ jobs:
 | GitHub Environments (secrets/vars) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Environment protection rules (approvals, wait timers) | ✅ | ❌ | ✅ | ✅ | ✅ |
 | Deployment branches restriction | ✅ | ❌ | ✅ | ✅ | ✅ |
+| Git tag deployment gates (ALM4Dataverse) | ✅ | ✅ | ✅ | ✅ | ✅ |
 | Actions minutes included | Unlimited | 2 000/month | 3 000/month | 3 000/month | 50 000/month |
 
 ### Impact on private repository deployments (Free plan)
@@ -375,36 +497,39 @@ jobs:
 On a **private repository with GitHub Free**:
 
 - You **can** store environment-specific secrets and variables in GitHub Environments.
-- You **cannot** add protection rules to environments — deployments run immediately
-  without waiting for approval.
-- You **can** use Approach 2 (prefixed global secrets) with the same limitation: no
-  approval gates.
+- You **cannot** add protection rules to environments — but the git tag gate mechanism
+  (see [Deployment Gates for GitHub Free](#deployment-gates-for-github-free)) provides
+  an equivalent ordered-promotion guarantee without approval rules.
 - Workflow minutes are limited to 2,000/month for the repository. Windows runners
   (used by ALM4Dataverse) consume minutes at 2× the Linux rate, so the effective
   budget is 1,000 minutes of pipeline time per month on the Free plan.
 
-**Workarounds for approval control on Free plan:**
+**Additional access controls on Free plan:**
 
 - Use branch protection rules on `main` to restrict who can merge/push, which
-  indirectly controls who can trigger deployments via the `workflow_run` trigger.
+  indirectly controls who can trigger automatic deployments via the `workflow_run`
+  trigger.
 - Restrict `workflow_dispatch` permission using repository collaborator roles —
-  only users with at least **Write** access can trigger manual workflows.
-- Consider upgrading to GitHub Pro/Team for production workloads.
+  only users with at least **Write** access can trigger manual workflows like
+  `DEPLOY-prod.yml`.
+- Consider upgrading to GitHub Pro/Team for production workloads requiring formal
+  approval workflows.
 
 ---
 
 ## Grant permissions for workflow operations
 
-### Write access for EXPORT
+### Write access for EXPORT and DEPLOY gate tags
 
 The EXPORT workflow commits and pushes solution changes back to the repository.
+The DEPLOY workflows push git tag gates after successful deployments.
 
 1. Go to **Settings** > **Actions** > **General**
 2. Under **Workflow permissions**, select **Read and write permissions**
 3. Click **Save**
 
-Alternatively, this is handled per-workflow via `permissions: contents: write` in the
-reusable workflow, which overrides the default.
+Alternatively, each reusable workflow declares `permissions: contents: write` which
+overrides the default on a per-job basis.
 
 ### Actions read for DEPLOY (artifact download)
 
@@ -421,13 +546,25 @@ Once configured:
 - **BUILD** — runs automatically on every push. View run status in the **Actions** tab.
 - **EXPORT** — go to **Actions** > **EXPORT** > **Run workflow**, enter a commit message, and click **Run workflow**.
 - **IMPORT** — go to **Actions** > **IMPORT** > **Run workflow** and click **Run workflow**.
-- **DEPLOY** — runs automatically when BUILD succeeds on `main`, or go to **Actions** > **DEPLOY-main** > **Run workflow** and provide a BUILD run ID.
+- **DEPLOY-main** — runs automatically when BUILD succeeds on `main`, deploying to TEST. Or trigger manually from **Actions** > **DEPLOY-main** > **Run workflow**.
+- **DEPLOY-prod** — triggered **manually only**. Once you have verified the TEST deployment, go to **Actions** > **DEPLOY-prod** > **Run workflow**, enter the BUILD run ID, and click **Run workflow**. The workflow verifies the TEST gate tag before proceeding.
 
 ### Finding a BUILD run ID for manual deploy
 
 1. Go to **Actions** and select the **BUILD** workflow
 2. Click the run you want to deploy
 3. The run ID is visible in the URL: `github.com/{owner}/{repo}/actions/runs/{run-id}`
+
+### Viewing deployment gate tags
+
+Gate tags are stored in the repository and are visible in the **Tags** section of the
+repository (under **Code** > **Tags**).  Each tag records which environment received
+which build:
+
+```
+deployed/TEST-main/12345678   ← TEST was successfully deployed for build 12345678
+deployed/PROD/12345678        ← PROD was successfully deployed for build 12345678
+```
 
 ---
 
@@ -436,4 +573,5 @@ Once configured:
 - [GitHub Actions reusable workflows](https://docs.github.com/en/actions/using-workflows/reusing-workflows)
 - [GitHub Environments and deployment protection rules](https://docs.github.com/en/actions/deployment/targeting-different-environments/using-environments-for-deployment)
 - [GitHub Actions billing and usage limits](https://docs.github.com/en/billing/managing-billing-for-github-actions/about-billing-for-github-actions)
+- [GitHub REST API — Git refs](https://docs.github.com/en/rest/git/refs)
 - [GitHub Secrets & Variables Reference](../config/github-secrets.md)
