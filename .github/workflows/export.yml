@@ -84,14 +84,35 @@ jobs:
         id: resolve-alm-source
         shell: pwsh
         run: |
-          $workflowRef = '${{ github.workflow_ref }}'
+          $jobContextJson = @'
+${{ toJson(job) }}
+'@
 
           $resolvedRepo = ''
           $resolvedRef = ''
 
-          if ($workflowRef -match '^(?<repo>[^/]+/[^/]+)/\.github/workflows/[^@]+@(?<ref>.+)$') {
-            $resolvedRepo = $Matches['repo']
-            $resolvedRef = $Matches['ref']
+          try {
+            $jobContext = $jobContextJson | ConvertFrom-Json -AsHashtable
+            if ($jobContext.ContainsKey('workflow_repository')) {
+              $resolvedRepo = [string]$jobContext['workflow_repository']
+            }
+            if ($jobContext.ContainsKey('workflow_sha')) {
+              $resolvedRef = [string]$jobContext['workflow_sha']
+            }
+            if (([string]::IsNullOrWhiteSpace($resolvedRepo) -or [string]::IsNullOrWhiteSpace($resolvedRef)) -and $jobContext.ContainsKey('workflow_ref')) {
+              $workflowRef = [string]$jobContext['workflow_ref']
+              if ($workflowRef -match '^(?<repo>[^/]+/[^/]+)/\.github/workflows/[^@]+@(?<ref>.+)$') {
+                if ([string]::IsNullOrWhiteSpace($resolvedRepo)) {
+                  $resolvedRepo = $Matches['repo']
+                }
+                if ([string]::IsNullOrWhiteSpace($resolvedRef)) {
+                  $resolvedRef = $Matches['ref']
+                }
+              }
+            }
+          }
+          catch {
+            Write-Host "Warning: Failed to parse job context for workflow identity. Falling back to defaults."
           }
 
           if ([string]::IsNullOrWhiteSpace($resolvedRepo)) {
