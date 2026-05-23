@@ -20,14 +20,24 @@ Features:
 
 ### GitHub Actions
 
-1) [GitHub Actions Setup Guide](docs/setup/github-setup.md) — copy the workflow templates,
-   configure credentials and optionally configure approval gates.
+1) Run the automated setup script in Windows PowerShell:
+
+   ```powershell
+   iwr https://github.com/ALM4Dataverse/ALM4Dataverse/releases/latest/download/setup-github.ps1 | iex
+   ```
+
+   Or follow the [GitHub Actions Setup Guide](docs/setup/github-setup.md) to configure manually.
 
 ### Azure DevOps
 
-1) [Run the automated setup process](docs/setup/azdo-automated-setup.md) to put in place the pipelines and other configuration needed.
+1) Run the automated setup script in Windows PowerShell:
 
-   Alternatively, if you prefer manual configuration, see the [Manual Setup Guide](docs/setup/azdo-manual-setup.md).
+   ```powershell
+   iwr https://github.com/ALM4Dataverse/ALM4Dataverse/releases/latest/download/setup-azdo.ps1 | iex
+   ```
+
+   Or follow the [Manual Setup Guide](docs/setup/azdo-manual-setup.md) if you prefer manual configuration.
+   See the [Automated Setup Guide](docs/setup/azdo-automated-setup.md) for details.
 
 
 ## Documentation
@@ -36,6 +46,7 @@ Features:
 
 #### GitHub Actions
 - [GitHub Actions Setup Guide](docs/setup/github-setup.md)
+- [GitHub Actions Automated Setup](docs/setup/github-automated-setup.md)
 
 #### Azure DevOps
 - [Azure DevOps Organization Requirements](docs/setup/azdo-organisation-requirements.md)

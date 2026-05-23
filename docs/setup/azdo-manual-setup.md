@@ -2,7 +2,7 @@
 
 This guide describes how to manually set up ALM4Dataverse using the Azure DevOps, Power Platform Admin Center and Entra ID user interfaces, without using the automated setup script.
 
-> **Note:** For automated setup, use the `setup.ps1` script instead. This manual guide is for users who prefer or require manual configuration.
+> **Note:** For automated setup, use the `setup-azdo.ps1` script instead. This manual guide is for users who prefer or require manual configuration.
 
 ## Prerequisites
 

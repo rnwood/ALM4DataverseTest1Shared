@@ -2,6 +2,9 @@
 
 This guide describes how to set up ALM4Dataverse for use with GitHub Actions.
 
+> **Automated setup**: For most users, the easiest option is to run `setup-github.ps1` which automates
+> all of the steps below. See the [GitHub Actions Automated Setup Guide](github-automated-setup.md).
+
 > **Azure DevOps users**: if you are using Azure DevOps, follow the [Azure DevOps setup guide](azdo-manual-setup.md) instead.
 
 ---

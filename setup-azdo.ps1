@@ -292,7 +292,7 @@ if ($rnwoodDataverseVersion -like '__*') {
         $config = Import-PowerShellDataFile -Path $configPath
         $rnwoodDataverseVersion = $config.scriptDependencies.'Rnwood.Dataverse.Data.PowerShell'
     } else {
-        throw "This script appears to be running in development mode but alm-config-defaults.psd1 was not found at $configPath. Please download the released version from https://github.com/rnwood/ALM4Dataverse/releases/latest/download/setup.ps1"
+        throw "This script appears to be running in development mode but alm-config-defaults.psd1 was not found at $configPath. Please download the released version from https://github.com/ALM4Dataverse/ALM4Dataverse/releases/latest/download/setup-azdo.ps1"
     }
 }
 
@@ -2593,7 +2593,7 @@ function Ensure-AzDoVariableGroupExists {
         }
 
         # Use VSTeam command to create variable group
-        $created = Add-VSTeamVariableGroup -ProjectName $Project -Name $GroupName -Type 'Vsts' -Variables $variablesPayload -Description 'ALM4Dataverse environment variable group (created by setup.ps1)'
+        $created = Add-VSTeamVariableGroup -ProjectName $Project -Name $GroupName -Type 'Vsts' -Variables $variablesPayload -Description 'ALM4Dataverse environment variable group (created by setup-azdo.ps1)'
 
         if ($created -and $created.id) {
             Write-Host "Created variable group '$GroupName' (id: $($created.id))."
