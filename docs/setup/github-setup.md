@@ -182,6 +182,32 @@ If your default branch is not `main`:
 - Rename `DEPLOY-main.yml` to `DEPLOY-{branchname}.yml`
 - Update the `branches:` filter in the `workflow_run` trigger
 
+### Workflow job timeouts
+
+ALM4Dataverse aligns GitHub Actions timeout defaults with the Azure DevOps templates:
+
+- Reusable workflows (`build.yml`, `export.yml`, `import.yml`, `deploy.yml`) default to `timeout-minutes: 360`.
+- Copied workflow stubs (`BUILD.yml`, `EXPORT.yml`, `IMPORT.yml`, `DEPLOY-*.yml`) pass `timeout-minutes: 360` explicitly.
+
+GitHub-hosted runners enforce a maximum of 360 minutes per job, so this value uses the full hosted-runner limit.
+
+You can override per workflow/stage by editing the caller workflow `with:` block.
+
+Example (single-stage override):
+
+```yaml
+jobs:
+  deploy-prod:
+    uses: ALM4Dataverse/ALM4Dataverse/.github/workflows/deploy.yml@stable
+    with:
+      environment-name: PROD
+      previous-environment-name: TEST-main
+      promotion-mode: manual-gate-tag
+      github-context-json: ${{ toJSON(github) }}
+      caller-inputs-json: ${{ toJSON(inputs) }}
+      timeout-minutes: 120
+```
+
 ---
 
 ## Credential Configuration

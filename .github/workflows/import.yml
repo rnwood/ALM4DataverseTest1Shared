@@ -50,10 +50,16 @@ on:
           If the environment does not exist in GitHub it will be created automatically
           with no protection rules.  Used to resolve credentials and configuration
           from the GitHub environment, plus prefixed repo-level secrets/variables.
+      timeout-minutes:
+        required: false
+        type: number
+        default: 360
+        description: 'Job timeout in minutes (matches Azure DevOps default)'
 
 jobs:
   import:
     runs-on: windows-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     environment: ${{ inputs.environment-name != '' && inputs.environment-name || format('Dev-{0}', github.ref_name) }}
     permissions:
       id-token: write  # request OIDC token for Workload Identity Federation

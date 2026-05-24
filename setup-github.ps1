@@ -2450,6 +2450,7 @@ function Update-DeployWorkflowInRepoClone {
         $lines.Add("      promotion-mode: $PromotionMode")
         $lines.Add('      github-context-json: ${{ toJSON(github) }}')
         $lines.Add('      caller-inputs-json: ${{ toJSON(inputs) }}')
+        $lines.Add('      timeout-minutes: 360')
         $lines.Add('    secrets: inherit')
         $lines.Add('')
 

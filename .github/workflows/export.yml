@@ -58,10 +58,16 @@ on:
         description: >
           Label passed to the export script as EnvironmentName (used in log messages).
           Defaults to "Dev-{branch}" when omitted.
+      timeout-minutes:
+        required: false
+        type: number
+        default: 360
+        description: 'Job timeout in minutes (matches Azure DevOps default)'
 
 jobs:
   export:
     runs-on: windows-latest
+    timeout-minutes: ${{ inputs.timeout-minutes }}
     environment:
       name: ${{ inputs.environment-name != '' && inputs.environment-name || format('Dev-{0}', github.ref_name) }}
       deployment: false   # export reads from Dataverse; no deployment record needed

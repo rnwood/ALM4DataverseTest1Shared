@@ -11,6 +11,8 @@ on:
 jobs:
   import:
     uses: ALM4Dataverse/ALM4Dataverse/.github/workflows/import.yml@stable
+    with:
+      timeout-minutes: 360
     permissions:
       id-token: write
     # Credentials are resolved automatically by the reusable workflow from either:

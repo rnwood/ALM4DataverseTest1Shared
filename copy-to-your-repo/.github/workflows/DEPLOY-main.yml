@@ -51,6 +51,7 @@ jobs:
       promotion-mode: manual-gate-tag
       github-context-json: ${{ toJSON(github) }}
       caller-inputs-json: ${{ toJSON(inputs) }}
+      timeout-minutes: 360
     secrets: inherit
 
   deploy-prod:
@@ -70,4 +71,5 @@ jobs:
       promotion-mode: manual-gate-tag
       github-context-json: ${{ toJSON(github) }}
       caller-inputs-json: ${{ toJSON(inputs) }}
+      timeout-minutes: 360
     secrets: inherit

@@ -99,6 +99,9 @@ the selected App Registration and grant it the **System Administrator** role.
 9. **Generates deployment promotion mode automatically** — writes `DEPLOY-{branch}.yml`
    with `promotion-mode: environment-approval` in environment mode, otherwise
    `promotion-mode: manual-gate-tag`.
+10. **Applies workflow timeout defaults** — configures workflow calls to pass
+    `timeout-minutes: 360` (matching Azure DevOps template defaults) for BUILD,
+    EXPORT, IMPORT, and each DEPLOY stage.
 
 ---
 

@@ -21,6 +21,7 @@ jobs:
       id-token: write
     with:
       commit-message: ${{ inputs.commit-message }}
+      timeout-minutes: 360
 
     # Credentials are resolved automatically by the reusable workflow from either:
     # 1) GitHub environment Dev-{branch} (default), or
