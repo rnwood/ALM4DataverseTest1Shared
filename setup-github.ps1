@@ -850,28 +850,30 @@ function Get-GitHubEnvironmentCapabilities {
     }
 
     try {
-        # Probe base environment availability without optional protection rules.
-        [void](Invoke-GhApi -Endpoint $probeEndpoint -Method 'PUT')
-        $result.EnvironmentsAvailable = $true
-    }
-    catch {
-        $result.Message = "GitHub environments are not available for this repository: $($_.Exception.Message)"
-    }
-
-    if ($result.EnvironmentsAvailable) {
-        if ($ApprovalReviewerId -gt 0) {
-            try {
-                # Probe required-reviewer availability separately from base environments support.
-                [void](Invoke-GhApi -Endpoint $probeEndpoint -Method 'PUT' -Body @{ reviewers = @(@{ type = 'User'; id = $ApprovalReviewerId }) })
-                $result.ApprovalsAvailable = $true
-                $result.Message = 'GitHub environments and required reviewers are available.'
-            }
-            catch {
-                $result.Message = "GitHub environments are available, but required reviewers are not available for this repository: $($_.Exception.Message)"
-            }
+        try {
+            # Probe base environment availability without optional protection rules.
+            [void](Invoke-GhApi -Endpoint $probeEndpoint -Method 'PUT')
+            $result.EnvironmentsAvailable = $true
         }
-        else {
-            $result.Message = 'GitHub environments are available, but required-reviewer support could not be probed because no reviewer id was provided.'
+        catch {
+            $result.Message = "GitHub environments are not available for this repository: $($_.Exception.Message)"
+        }
+
+        if ($result.EnvironmentsAvailable) {
+            if ($ApprovalReviewerId -gt 0) {
+                try {
+                    # Probe required-reviewer availability separately from base environments support.
+                    [void](Invoke-GhApi -Endpoint $probeEndpoint -Method 'PUT' -Body @{ reviewers = @(@{ type = 'User'; id = $ApprovalReviewerId }) })
+                    $result.ApprovalsAvailable = $true
+                    $result.Message = 'GitHub environments and required reviewers are available.'
+                }
+                catch {
+                    $result.Message = "GitHub environments are available, but required reviewers are not available for this repository: $($_.Exception.Message)"
+                }
+            }
+            else {
+                $result.Message = 'GitHub environments are available, but required-reviewer support could not be probed because no reviewer id was provided.'
+            }
         }
     }
     finally {
