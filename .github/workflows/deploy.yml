@@ -189,6 +189,59 @@ jobs:
             return ([string]$Run.id).Trim()
           }
 
+          function Resolve-BuildRunCanonicalName {
+            param([Parameter(Mandatory)][object]$Run)
+
+            $repoName = ''
+            foreach ($repoProperty in @('head_repository', 'repository')) {
+              if ($Run.PSObject.Properties.Name -contains $repoProperty) {
+                $repo = $Run.$repoProperty
+                if ($null -ne $repo -and $repo.PSObject.Properties.Name -contains 'name') {
+                  $repoName = [string]$repo.name
+                  if (-not [string]::IsNullOrWhiteSpace($repoName)) {
+                    break
+                  }
+                }
+              }
+            }
+
+            if ([string]::IsNullOrWhiteSpace($repoName)) {
+              $repoName = ([string]$env:GITHUB_REPOSITORY).Split('/')[-1]
+            }
+
+            $branchName = ''
+            if ($Run.PSObject.Properties.Name -contains 'head_branch') {
+              $branchName = [string]$Run.head_branch
+            }
+            $branchName = $branchName -replace '[^a-zA-Z0-9._/-]', '-'
+
+            $createdAtValue = ''
+            if ($Run.PSObject.Properties.Name -contains 'created_at') {
+              $createdAtValue = [string]$Run.created_at
+            }
+
+            $formattedDate = ''
+            if (-not [string]::IsNullOrWhiteSpace($createdAtValue)) {
+              $formattedDate = ([DateTimeOffset]::Parse($createdAtValue)).ToString('yyyy-MM-dd-HHmmss')
+            }
+
+            $runNumber = ''
+            if ($Run.PSObject.Properties.Name -contains 'run_number') {
+              $runNumber = [string]$Run.run_number
+            }
+
+            if (
+              -not [string]::IsNullOrWhiteSpace($repoName) -and
+              -not [string]::IsNullOrWhiteSpace($branchName) -and
+              -not [string]::IsNullOrWhiteSpace($formattedDate) -and
+              -not [string]::IsNullOrWhiteSpace($runNumber)
+            ) {
+              return "$repoName-$branchName-$formattedDate-$runNumber"
+            }
+
+            return Resolve-BuildRunDisplayName -Run $Run
+          }
+
           function ConvertTo-GateTagSegment {
             param([Parameter(Mandatory)][string]$Value)
 
@@ -227,7 +280,8 @@ jobs:
               }
 
               $match = $runs | Where-Object {
-                (Resolve-BuildRunDisplayName -Run $_) -ieq $RunName
+                (Resolve-BuildRunDisplayName -Run $_) -ieq $RunName -or
+                (Resolve-BuildRunCanonicalName -Run $_) -ieq $RunName
               } | Select-Object -First 1
 
               if ($match) {
@@ -235,7 +289,7 @@ jobs:
               }
             }
 
-            throw "No BUILD workflow run named '$RunName' was found. Use the BUILD run name shown in the Actions tab (for example 'main-562'), or supply the numeric run ID instead."
+            throw "No BUILD workflow run named '$RunName' was found. Use the canonical BUILD name (for example 'repo-main-2026-05-26-143015-4'), the Actions UI run title, or supply the numeric run ID instead."
           }
 
           $environmentName = $env:INPUT_ENVIRONMENT_NAME.Trim()
@@ -298,7 +352,7 @@ jobs:
           }
 
           $buildRunId = [string]$buildRun.id
-          $buildRunName = Resolve-BuildRunDisplayName -Run $buildRun
+          $buildRunName = Resolve-BuildRunCanonicalName -Run $buildRun
           $buildRunTagKey = ConvertTo-GateTagSegment -Value $buildRunName
           $buildRunWorkflowPath = [string]$buildRun.path
           $buildRunConclusion = [string]$buildRun.conclusion

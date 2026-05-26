@@ -453,7 +453,7 @@ BUILD (auto) → [human decision] → DEPLOY-main manual-run (TEST stage) → [h
 ```
 
 1. **BUILD** runs automatically on every push to `main`.
-2. A team member manually triggers **DEPLOY-main** by going to **Actions** > **DEPLOY-main** > **Run workflow**, entering the BUILD run name shown in the Actions UI (for example `main-562`), and setting `target-environment` to the desired stage (for example `TEST-main`).
+2. A team member manually triggers **DEPLOY-main** by going to **Actions** > **DEPLOY-main** > **Run workflow**, entering the BUILD name (for example `repo-main-2026-05-26-143015-4`), and setting `target-environment` to the desired stage (for example `TEST-main`).
 3. When the selected stage succeeds it pushes two lightweight git tags:
    ```
   {build-run-name}/deployed/TEST-main
@@ -464,7 +464,7 @@ BUILD (auto) → [human decision] → DEPLOY-main manual-run (TEST stage) → [h
   the previous stage gate tag exists (`{build-run-name}/deployed/{previous-environment}`).
    If it doesn't — because TEST never succeeded for that build — the workflow
    **fails immediately** with a clear error:
-  > *Deployment gate check FAILED: the tag `main-562/deployed/TEST-main` does not exist.
+  > *Deployment gate check FAILED: the tag `repo-main-2026-05-26-143015-4/deployed/TEST-main` does not exist.
    > Deploy to the previous environment first, then re-trigger this workflow.*
 6. If the tag is present, deployment proceeds and on success pushes:
    ```
@@ -596,8 +596,10 @@ Once configured:
 ### Finding a BUILD run name for manual deploy
 
 1. Go to **Actions** and select the **BUILD** workflow
-2. Find the run title in the list or open the run and copy the name shown at the top (for example `main-562`)
-3. Enter that run name into **DEPLOY-main** when triggering a manual deployment
+2. Open the **Set build number** step and copy the canonical BUILD name shown in the logs (for example `repo-main-2026-05-26-143015-4`)
+3. Enter that BUILD name into **DEPLOY-main** when triggering a manual deployment
+
+The same value is also used in the source tag name (`vrepo-main-2026-05-26-143015-4`).
 
 For backward compatibility, numeric run IDs from the run URL are still accepted too.
 
@@ -612,10 +614,10 @@ of the repository (under **Code** > **Tags**).
 Example:
 
 ```
-main-562/deployed/TEST-main   ← TEST was successfully deployed for build main-562
-main-562/deployed/PROD        ← PROD was successfully deployed for build main-562
-deployed/TEST-main            ← TEST currently points at build main-562
-deployed/PROD                 ← PROD currently points at build main-562
+repo-main-2026-05-26-143015-4/deployed/TEST-main   ← TEST was successfully deployed for that build
+repo-main-2026-05-26-143015-4/deployed/PROD        ← PROD was successfully deployed for that build
+deployed/TEST-main                                 ← TEST currently points at that build
+deployed/PROD                                      ← PROD currently points at that build
 ```
 
 ---
