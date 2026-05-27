@@ -723,9 +723,10 @@ jobs:
           if (-not [string]::IsNullOrWhiteSpace($environmentPointerTag)) {
             Write-Host "Updating environment pointer tag: $environmentPointerTag"
 
-            # Delete the existing pointer tag if it exists; ignore 404.
+
+            # Delete the existing pointer tag if it exists; ignore 404 and 422 (Reference does not exist).
             $delOut = gh api --method DELETE "/repos/$repo/git/refs/tags/$environmentPointerTag" 2>&1
-            if ($LASTEXITCODE -ne 0 -and "$delOut" -notmatch '"Not Found"|404') {
+            if ($LASTEXITCODE -ne 0 -and "$delOut" -notmatch '"Not Found"|404|Reference does not exist|422') {
               Write-Error "Unexpected error deleting pointer tag '$environmentPointerTag': $delOut"
               exit 1
             }
