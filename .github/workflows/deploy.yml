@@ -433,8 +433,11 @@ jobs:
           function Get-ExactGitTagRef {
             param([Parameter(Mandatory)][string]$TagName)
 
-            $matchingRefs = @(Invoke-RestMethod -Uri "$apiBase/git/matching-refs/tags/$TagName" -Headers $headers)
-            $exactRef = $matchingRefs | Where-Object { ([string]$_.ref) -ceq "refs/tags/$TagName" } | Select-Object -First 1
+            # Use the first path segment as the listing prefix so the URL contains
+            # no slash in the variable part, avoiding REST router ambiguity.
+            $prefix = ($TagName -split '/')[0]
+            $allRefs = @(Invoke-RestMethod -Uri "$apiBase/git/refs/tags/$prefix?per_page=100" -Headers $headers)
+            $exactRef = $allRefs | Where-Object { ([string]$_.ref) -ceq "refs/tags/$TagName" } | Select-Object -First 1
             return $exactRef
           }
 
@@ -738,24 +741,23 @@ jobs:
               [switch]$AllowMissing
             )
 
+            # Use the first path segment as the listing prefix so the URL contains
+            # no slash in the variable part, avoiding REST router ambiguity for
+            # slash-containing tag names like 'deployed/test'.
+            $prefix = ($TagName -split '/')[0]
             try {
-              $matchingRefs = @(Invoke-RestMethod -Uri "$apiBase/git/matching-refs/tags/$TagName" -Headers $headers)
-              $exactRef = $matchingRefs | Where-Object { ([string]$_.ref) -ceq "refs/tags/$TagName" } | Select-Object -First 1
-              if ($null -eq $exactRef -and -not $AllowMissing) {
-                throw "Tag ref '$TagName' was not found."
+              $allRefs = @(Invoke-RestMethod -Uri "$apiBase/git/refs/tags/$prefix?per_page=100" -Headers $headers)
+              $exactRef = $allRefs | Where-Object { ([string]$_.ref) -ieq "refs/tags/$TagName" } | Select-Object -First 1
+              if ($null -eq $exactRef) {
+                if ($AllowMissing) { return $null }
+                throw "Tag ref 'refs/tags/$TagName' was not found."
               }
-
               return $exactRef
             } catch {
               $status = $_.Exception.Response.StatusCode.value__
-              if ($AllowMissing -and $status -eq 404) {
+              if ($AllowMissing -and ($status -eq 404 -or ($null -eq $_.Exception.Response -and $_.Exception.Message -like "*was not found*"))) {
                 return $null
               }
-
-              if ($AllowMissing -and $null -eq $_.Exception.Response -and $_.Exception.Message -like "*was not found*") {
-                return $null
-              }
-
               throw
             }
           }
