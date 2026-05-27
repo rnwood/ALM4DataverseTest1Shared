@@ -430,12 +430,12 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: |
-          function Get-GitTagRefRelativePath {
+          function Get-ExactGitTagRef {
             param([Parameter(Mandatory)][string]$TagName)
 
-            # GitHub expects slash-separated ref names here (for example tags/deployed/test).
-            # Encoding the whole tag turns '/' into '%2F', which can make existing refs look missing.
-            return "git/ref/tags/$TagName"
+            $matchingRefs = @(Invoke-RestMethod -Uri "$apiBase/git/matching-refs/tags/$TagName" -Headers $headers)
+            $exactRef = $matchingRefs | Where-Object { ([string]$_.ref) -ceq "refs/tags/$TagName" } | Select-Object -First 1
+            return $exactRef
           }
 
           # Verify the previous environment's success-gate-tag exists before proceeding.
@@ -449,12 +449,14 @@ jobs:
           }
           Write-Host "Checking for required gate tag: $gateTag"
           try {
-            $relativePath = Get-GitTagRefRelativePath -TagName $gateTag
-            Invoke-RestMethod -Uri "$apiBase/$relativePath" -Headers $headers | Out-Null
+            $gateRef = Get-ExactGitTagRef -TagName $gateTag
+            if ($null -eq $gateRef) {
+              throw [System.Net.WebException]::new("Gate tag not found")
+            }
             Write-Host "✅ Gate tag '$gateTag' found — proceeding with deployment."
           } catch {
             $status = $_.Exception.Response.StatusCode.value__
-            if ($status -eq 404) {
+            if ($status -eq 404 -or $null -eq $_.Exception.Response) {
               Write-Error (
                 "Deployment gate check FAILED: the tag '$gateTag' does not exist.`n" +
                 "This means the prerequisite environment has not been successfully deployed for this build.`n" +
@@ -730,14 +732,6 @@ jobs:
             Invoke-RestMethod -Method POST -Uri "$apiBase/git/refs" -Headers $headers -Body $body | Out-Null
           }
 
-          function Get-GitTagRefRelativePath {
-            param([Parameter(Mandatory)][string]$TagName)
-
-            # GitHub expects slash-separated ref names here (for example tags/deployed/test).
-            # Encoding the whole tag turns '/' into '%2F', which can make existing refs look missing.
-            return "git/ref/tags/$TagName"
-          }
-
           function Get-TagRef {
             param(
               [Parameter(Mandatory)][string]$TagName,
@@ -745,11 +739,20 @@ jobs:
             )
 
             try {
-              $relativePath = Get-GitTagRefRelativePath -TagName $TagName
-              return Invoke-RestMethod -Uri "$apiBase/$relativePath" -Headers $headers
+              $matchingRefs = @(Invoke-RestMethod -Uri "$apiBase/git/matching-refs/tags/$TagName" -Headers $headers)
+              $exactRef = $matchingRefs | Where-Object { ([string]$_.ref) -ceq "refs/tags/$TagName" } | Select-Object -First 1
+              if ($null -eq $exactRef -and -not $AllowMissing) {
+                throw "Tag ref '$TagName' was not found."
+              }
+
+              return $exactRef
             } catch {
               $status = $_.Exception.Response.StatusCode.value__
               if ($AllowMissing -and $status -eq 404) {
+                return $null
+              }
+
+              if ($AllowMissing -and $null -eq $_.Exception.Response -and $_.Exception.Message -like "*was not found*") {
                 return $null
               }
 
@@ -787,10 +790,35 @@ jobs:
           }
 
           function Remove-TagRef {
-            param([Parameter(Mandatory)][string]$TagName)
+            param(
+              [Parameter(Mandatory)][string]$TagName,
+              [string]$RefUrl = ''
+            )
 
-            $relativePath = "git/refs/tags/$TagName"
-            Invoke-RestMethod -Method DELETE -Uri "$apiBase/$relativePath" -Headers $headers | Out-Null
+            $uri = $RefUrl
+            if ([string]::IsNullOrWhiteSpace($uri)) {
+              $relativePath = "git/refs/tags/$TagName"
+              $uri = "$apiBase/$relativePath"
+            }
+
+            Invoke-RestMethod -Method DELETE -Uri $uri -Headers $headers | Out-Null
+          }
+
+          function Update-TagRef {
+            param(
+              [Parameter(Mandatory)][string]$TagName,
+              [Parameter(Mandatory)][string]$Sha,
+              [string]$RefUrl = ''
+            )
+
+            $uri = $RefUrl
+            if ([string]::IsNullOrWhiteSpace($uri)) {
+              $relativePath = "git/refs/tags/$TagName"
+              $uri = "$apiBase/$relativePath"
+            }
+
+            $body = @{ sha = $Sha; force = $true } | ConvertTo-Json
+            Invoke-RestMethod -Method PATCH -Uri $uri -Headers $headers -Body $body | Out-Null
           }
 
           # Resolve the HEAD commit SHA of the originating BUILD run.
@@ -819,10 +847,24 @@ jobs:
             try {
               $existingPointerTag = Get-TagRef -TagName $environmentPointerTag -AllowMissing
               if ($null -eq $existingPointerTag) {
-                New-TagRef -TagName $environmentPointerTag -Sha $sha
-                Write-Host "✅ Environment pointer tag '$environmentPointerTag' created successfully."
+                try {
+                  New-TagRef -TagName $environmentPointerTag -Sha $sha
+                  Write-Host "✅ Environment pointer tag '$environmentPointerTag' created successfully."
+                } catch {
+                  $status = $_.Exception.Response.StatusCode.value__
+                  if ($status -ne 422) {
+                    throw
+                  }
+
+                  Write-Host "Environment pointer tag '$environmentPointerTag' reported as already existing while being created — reloading current ref."
+                  $existingPointerTag = Get-TagRef -TagName $environmentPointerTag -AllowMissing
+                  if ($null -eq $existingPointerTag) {
+                    throw
+                  }
+                }
               }
-              else {
+
+              if ($null -ne $existingPointerTag) {
                 $existingPointerTargetSha = Resolve-TagTargetSha -TagRef $existingPointerTag
                 if ([string]::IsNullOrWhiteSpace($existingPointerTargetSha)) {
                   throw "Could not resolve the existing target SHA for environment pointer tag '$environmentPointerTag'."
@@ -832,10 +874,21 @@ jobs:
                   Write-Host "ℹ️  Environment pointer tag '$environmentPointerTag' already points to $sha — no update needed."
                 }
                 else {
-                  Write-Host "Environment pointer tag '$environmentPointerTag' currently points to $existingPointerTargetSha — recreating at $sha."
-                  Remove-TagRef -TagName $environmentPointerTag
-                  New-TagRef -TagName $environmentPointerTag -Sha $sha
-                  Write-Host "✅ Environment pointer tag '$environmentPointerTag' updated successfully."
+                  Write-Host "Environment pointer tag '$environmentPointerTag' currently points to $existingPointerTargetSha — updating to $sha."
+                  try {
+                    Update-TagRef -TagName $environmentPointerTag -Sha $sha -RefUrl ([string]$existingPointerTag.url)
+                    Write-Host "✅ Environment pointer tag '$environmentPointerTag' updated successfully."
+                  } catch {
+                    $status = $_.Exception.Response.StatusCode.value__
+                    if ($status -ne 422) {
+                      throw
+                    }
+
+                    Write-Host "GitHub rejected the direct ref update for '$environmentPointerTag' (422) — recreating the ref instead."
+                    Remove-TagRef -TagName $environmentPointerTag -RefUrl ([string]$existingPointerTag.url)
+                    New-TagRef -TagName $environmentPointerTag -Sha $sha
+                    Write-Host "✅ Environment pointer tag '$environmentPointerTag' updated successfully after recreate."
+                  }
                 }
               }
             } catch {
