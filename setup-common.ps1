@@ -637,7 +637,7 @@ function Get-SetupPromptGuidance {
             PromptPattern = '^Select the repository to set up ALM4Dataverse in$'
             Lines         = @(
                 'Choose the main repository where ALM4Dataverse should add workflow files and repository configuration.',
-                'This is the repo your solutions and deployment automation will live in.'
+                'This is the repo your solutions and other assets will live in.'
             )
             DocRelativePath = 'docs/setup/github-setup.md'
         },
@@ -2847,4 +2847,69 @@ function New-EntraIdApplicationSecret {
     $secretUri = "https://graph.microsoft.com/v1.0/applications/$ApplicationObjectId/addPassword"
     $secretResponse = Invoke-RestMethod -Uri $secretUri -Headers $headers -Method Post -Body ($secretBody | ConvertTo-Json)
     return $secretResponse.secretText
+}
+
+function Resolve-DataverseEnvironmentFriendlyName {
+    [CmdletBinding()]
+    param(
+        [Parameter()][string]$EnvironmentUrl,
+        [Parameter()][string]$FallbackName
+    )
+
+    $normalizedEnvironmentUrl = ConvertTo-NormalizedEnvironmentUrl -Url $EnvironmentUrl
+    if ([string]::IsNullOrWhiteSpace($normalizedEnvironmentUrl)) {
+        return $FallbackName
+    }
+
+    try {
+        $matchingEnvironment = Get-DataverseEnvironmentCatalog | Where-Object {
+            (ConvertTo-NormalizedEnvironmentUrl -Url $_.Endpoints['WebApplication']) -eq $normalizedEnvironmentUrl
+        } | Select-Object -First 1
+
+        if ($matchingEnvironment -and -not [string]::IsNullOrWhiteSpace($matchingEnvironment.FriendlyName)) {
+            return [string]$matchingEnvironment.FriendlyName
+        }
+    }
+    catch {
+        Write-Host "Could not resolve Dataverse environment name for '$normalizedEnvironmentUrl'. Falling back to '$FallbackName'." -ForegroundColor DarkGray
+    }
+
+    return $FallbackName
+}
+
+function Resolve-EntraIdApplicationByAppId {
+    [CmdletBinding()]
+    param(
+        [Parameter()][string]$ApplicationId,
+        [Parameter()][string]$TenantId
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ApplicationId) -or [string]::IsNullOrWhiteSpace($TenantId)) {
+        return $null
+    }
+
+    if (-not (Get-Variable -Name 'entraApplicationCache' -Scope Script -ErrorAction SilentlyContinue)) {
+        $script:entraApplicationCache = @{}
+    }
+
+    $cacheKey = "$TenantId|$ApplicationId"
+    if ($script:entraApplicationCache.ContainsKey($cacheKey)) {
+        return $script:entraApplicationCache[$cacheKey]
+    }
+
+    $graphToken = Get-AuthToken -ResourceUrl 'https://graph.microsoft.com' -TenantId $TenantId
+    $headers = @{ Authorization = "Bearer $($graphToken.AccessToken)" }
+    $uri = "https://graph.microsoft.com/v1.0/applications?`$filter=appId eq '$ApplicationId'&`$select=id,appId,displayName"
+
+    try {
+        $response = Invoke-RestMethod -Uri $uri -Headers $headers -Method Get
+        $application = $response.value | Select-Object -First 1
+        $script:entraApplicationCache[$cacheKey] = $application
+        return $application
+    }
+    catch {
+        Write-Warning "Failed to resolve App Registration '$ApplicationId' from Entra ID: $($_.Exception.Message)"
+        $script:entraApplicationCache[$cacheKey] = $null
+        return $null
+    }
 }
