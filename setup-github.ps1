@@ -1,4 +1,3 @@
-
 [CmdletBinding()]
 param(
     [Parameter()]
@@ -47,12 +46,10 @@ else {
     __SETUP_COMMON_LIB__
 }
 
-$script:setupPhaseNames = @('Connect', 'Repository', 'Configure', 'DEV env', 'Deployment envs')
-
 #region Initialization
 
-Set-SetupPhaseContext -PhaseNames $script:setupPhaseNames -CurrentPhaseIndex 0
-Write-Section "Initialising setup"
+Write-Section `
+    -Message "Initialising setup" 
 
 $TempModuleRoot = Join-Path ([System.IO.Path]::GetTempPath()) "ALM4Dataverse\Modules"
 New-DirectoryIfMissing -Path $TempModuleRoot
@@ -157,27 +154,37 @@ function Invoke-GhApi {
 
     $ghArgs = @('api', '--method', $Method, $Endpoint)
     
-    if ($Body) {
-        $json = $Body | ConvertTo-Json -Depth 10 -Compress
-        $ghArgs += @('--input', '-')
-        
-        $result = $json | & gh @ghArgs 2>&1
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+
+        if ($Body) {
+            $json = $Body | ConvertTo-Json -Depth 10 -Compress
+            $ghArgs += @('--input', '-')
+
+            $result = @($json | & gh @ghArgs 2>&1)
+        }
+        else {
+            $result = @(& gh @ghArgs 2>&1)
+        }
+
+        $ghExitCode = $LASTEXITCODE
     }
-    else {
-        $result = & gh @ghArgs 2>&1
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
     }
-    
-    if ($LASTEXITCODE -ne 0) {
-        $errText = $result -join "`n"
+
+    if ($ghExitCode -ne 0) {
+        $errText = @($result | ForEach-Object { [string]$_ }) -join "`n"
         if ($AllowNotFound -and ($errText -match '404' -or $errText -match 'Not Found')) {
             return $null
         }
-        throw "gh api call failed (HTTP $LASTEXITCODE): $errText"
+        throw "gh api call failed (exit code $ghExitCode): $errText"
     }
     
     if ($result) {
         try {
-            return $result | ConvertFrom-Json
+            return (@($result) -join [Environment]::NewLine) | ConvertFrom-Json
         }
         catch {
             return $result
@@ -263,12 +270,20 @@ function Set-GitHubEnvironmentSecret {
     # when sending strings over stdin, which would corrupt client secret values.
     $normalizedSecretValue = ($SecretValue -replace "[\r\n]+$", "")
 
-    $result = & gh secret set $SecretName `
-        --repo "$Owner/$Repo" `
-        --env $EnvironmentName `
-        --body $normalizedSecretValue 2>&1
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $result = @(& gh secret set $SecretName `
+            --repo "$Owner/$Repo" `
+            --env $EnvironmentName `
+            --body $normalizedSecretValue 2>&1)
+        $setExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
 
-    if ($LASTEXITCODE -ne 0) {
+    if ($setExitCode -ne 0) {
         throw "Failed to set secret '$SecretName': $($result -join "`n")"
     }
     Write-Host "Set secret '$SecretName'." -ForegroundColor DarkGray
@@ -290,12 +305,20 @@ function Set-GitHubEnvironmentVariable {
 
     Write-Host "Setting variable '$VariableName' in environment '$EnvironmentName'..." -ForegroundColor DarkGray
 
-    $result = & gh variable set $VariableName `
-        --repo "$Owner/$Repo" `
-        --env $EnvironmentName `
-        --body $VariableValue 2>&1
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $result = @(& gh variable set $VariableName `
+            --repo "$Owner/$Repo" `
+            --env $EnvironmentName `
+            --body $VariableValue 2>&1)
+        $setExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
 
-    if ($LASTEXITCODE -ne 0) {
+    if ($setExitCode -ne 0) {
         throw "Failed to set variable '$VariableName': $($result -join "`n")"
     }
     Write-Host "Set variable '$VariableName'." -ForegroundColor DarkGray
@@ -320,11 +343,19 @@ function Set-GitHubRepoSecret {
     # when sending strings over stdin, which would corrupt client secret values.
     $normalizedSecretValue = ($SecretValue -replace "[\r\n]+$", "")
 
-    $result = & gh secret set $SecretName `
-        --repo "$Owner/$Repo" `
-        --body $normalizedSecretValue 2>&1
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $result = @(& gh secret set $SecretName `
+            --repo "$Owner/$Repo" `
+            --body $normalizedSecretValue 2>&1)
+        $setExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
 
-    if ($LASTEXITCODE -ne 0) {
+    if ($setExitCode -ne 0) {
         throw "Failed to set repo secret '$SecretName': $($result -join "`n")"
     }
     Write-Host "Set repo-level secret '$SecretName'." -ForegroundColor DarkGray
@@ -345,11 +376,19 @@ function Set-GitHubRepoVariable {
 
     Write-Host "Setting repo-level variable '$VariableName'..." -ForegroundColor DarkGray
 
-    $result = & gh variable set $VariableName `
-        --repo "$Owner/$Repo" `
-        --body $VariableValue 2>&1
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $result = @(& gh variable set $VariableName `
+            --repo "$Owner/$Repo" `
+            --body $VariableValue 2>&1)
+        $setExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
 
-    if ($LASTEXITCODE -ne 0) {
+    if ($setExitCode -ne 0) {
         throw "Failed to set repo variable '$VariableName': $($result -join "`n")"
     }
     Write-Host "Set repo-level variable '$VariableName'." -ForegroundColor DarkGray
@@ -470,11 +509,20 @@ function Get-GitHubRepoList {
     [CmdletBinding()]
     param()
 
-    $result = & gh repo list --json nameWithOwner,name,owner,defaultBranchRef --limit 100 2>&1
-    if ($LASTEXITCODE -ne 0) {
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $result = @(& gh repo list --json nameWithOwner,name,owner,defaultBranchRef --limit 100 2>&1)
+        $listExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    if ($listExitCode -ne 0) {
         throw "Failed to list repositories: $($result -join "`n")"
     }
-    return $result | ConvertFrom-Json
+    return (@($result) -join [Environment]::NewLine) | ConvertFrom-Json
 }
 
 function Get-GitHubRepo {
@@ -488,11 +536,20 @@ function Get-GitHubRepo {
         [Parameter(Mandatory)][string]$Repo
     )
 
-    $result = & gh repo view "$Owner/$Repo" --json nameWithOwner,name,owner,defaultBranchRef 2>&1
-    if ($LASTEXITCODE -ne 0) {
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $result = @(& gh repo view "$Owner/$Repo" --json nameWithOwner,name,owner,defaultBranchRef 2>&1)
+        $viewExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    if ($viewExitCode -ne 0) {
         throw "Failed to get repository '$Owner/$Repo': $($result -join "`n")"
     }
-    return $result | ConvertFrom-Json
+    return (@($result) -join [Environment]::NewLine) | ConvertFrom-Json
 }
 
 function Ensure-GitHubSharedWorkflowAccessPolicy {
@@ -643,6 +700,104 @@ function Get-GitHubDeploymentEnvironmentNamesFromRepoClone {
     return @($names)
 }
 
+function Get-GitHubDeploymentEnvironmentNamesFromWorkflowContent {
+    [CmdletBinding()]
+    param(
+        [Parameter()][string]$WorkflowContent
+    )
+
+    if ([string]::IsNullOrWhiteSpace($WorkflowContent)) {
+        return @()
+    }
+
+    $environmentNameMatches = [regex]::Matches($WorkflowContent, '(?m)^\s*environment-name:\s*["'']?([^"''\r\n]+)["'']?\s*$')
+    $names = @()
+    foreach ($environmentNameMatch in $environmentNameMatches) {
+        $name = $environmentNameMatch.Groups[1].Value.Trim()
+        if (-not [string]::IsNullOrWhiteSpace($name) -and $names -notcontains $name) {
+            $names += $name
+        }
+    }
+
+    return @($names)
+}
+
+function Get-GitRepoFileContentFromRemoteBranch {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RepoRoot,
+        [Parameter(Mandatory)][string]$Branch,
+        [Parameter(Mandatory)][string]$RelativePath
+    )
+
+    $normalizedPath = $RelativePath.Replace('\\', '/')
+    $candidateRefs = @("origin/$Branch", $Branch)
+    foreach ($candidateRef in $candidateRefs) {
+        $content = (& git -C $RepoRoot show "${candidateRef}:${normalizedPath}" 2>$null | Out-String)
+        if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($content)) {
+            return $content
+        }
+    }
+
+    return $null
+}
+
+function Get-GitHubDeployWorkflowBranchMappingsFromRepoClone {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RepoRoot
+    )
+
+    $branchRefs = @(& git -C $RepoRoot for-each-ref --format='%(refname:short)' refs/remotes/origin/* 2>$null)
+    $branches = @($branchRefs | ForEach-Object {
+        $candidate = [string]$_
+        if ($candidate -match '^origin/(.+)$') { $candidate = $Matches[1] }
+
+        if ([string]::IsNullOrWhiteSpace($candidate)) {
+            return $null
+        }
+
+        if ($candidate -in @('HEAD', 'origin')) {
+            return $null
+        }
+
+        if ($candidate -match '^origin/') {
+            return $null
+        }
+
+        return $candidate
+    } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+
+    $mappings = @()
+    foreach ($branch in $branches) {
+        $remoteRef = "origin/$branch"
+        & git -C $RepoRoot rev-parse --verify $remoteRef 2>$null | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            continue
+        }
+
+        $workflowFiles = @(& git -C $RepoRoot ls-tree -r --name-only $remoteRef '.github/workflows' 2>$null)
+        foreach ($workflowFile in $workflowFiles) {
+            if ($workflowFile -notmatch '^\.github/workflows/DEPLOY-(.+)\.yml$') {
+                continue
+            }
+
+            $fileBranchName = [string]$Matches[1]
+            $workflowContent = Get-GitRepoFileContentFromRemoteBranch -RepoRoot $RepoRoot -Branch $branch -RelativePath $workflowFile
+            $environmentNames = Get-GitHubDeploymentEnvironmentNamesFromWorkflowContent -WorkflowContent $workflowContent
+
+            $mappings += [pscustomobject]@{
+                BranchName       = $fileBranchName
+                SourceBranch     = $branch
+                WorkflowPath     = $workflowFile
+                EnvironmentNames = @($environmentNames)
+            }
+        }
+    }
+
+    return @($mappings | Sort-Object BranchName -Unique)
+}
+
 function Get-GitHubExistingEnvironmentState {
     [CmdletBinding()]
     param(
@@ -730,26 +885,82 @@ function Get-GitHubRepositoryExistingSetupState {
     $devEnvironmentName = "Dev-$DefaultBranch"
     $devEnvironment = Get-GitHubExistingEnvironmentState -Owner $RepoOwner -Repo $RepoName -EnvironmentName $devEnvironmentName -TenantId $TenantId
     $deploymentEnvironments = @()
+    $deploymentBranchMappings = @()
     $storageScope = $null
 
-    foreach ($environmentName in @(Get-GitHubDeploymentEnvironmentNamesFromRepoClone -RepoRoot $RepoRoot -DefaultBranch $DefaultBranch)) {
-        $environmentState = Get-GitHubExistingEnvironmentState -Owner $RepoOwner -Repo $RepoName -EnvironmentName $environmentName -TenantId $TenantId
-        if ($environmentState) {
-            $deploymentEnvironments += $environmentState
-            if (-not $storageScope -and $environmentState.StorageScope) {
-                $storageScope = $environmentState.StorageScope
+    $workflowBranchMappings = @(Get-GitHubDeployWorkflowBranchMappingsFromRepoClone -RepoRoot $RepoRoot)
+    foreach ($workflowBranchMapping in $workflowBranchMappings) {
+        $mappedEnvironmentStates = @()
+        foreach ($environmentName in @($workflowBranchMapping.EnvironmentNames)) {
+            if ([string]::IsNullOrWhiteSpace($environmentName)) {
+                continue
+            }
+
+            $existingState = $deploymentEnvironments | Where-Object { $_.ShortName -ieq $environmentName } | Select-Object -First 1
+            if ($existingState) {
+                $mappedEnvironmentStates += $existingState
+                continue
+            }
+
+            $environmentState = Get-GitHubExistingEnvironmentState -Owner $RepoOwner -Repo $RepoName -EnvironmentName $environmentName -TenantId $TenantId
+            if ($environmentState) {
+                $deploymentEnvironments += $environmentState
+                $mappedEnvironmentStates += $environmentState
+                if (-not $storageScope -and $environmentState.StorageScope) {
+                    $storageScope = $environmentState.StorageScope
+                }
+            }
+            else {
+                $placeholderState = [pscustomobject]@{
+                    ShortName         = $environmentName
+                    FriendlyName      = $environmentName
+                    Url               = $null
+                    Credentials       = $null
+                    ServiceAccountUPN = $null
+                    StorageScope      = $null
+                }
+                $deploymentEnvironments += $placeholderState
+                $mappedEnvironmentStates += $placeholderState
             }
         }
-        else {
-            $deploymentEnvironments += [pscustomobject]@{
-                ShortName         = $environmentName
-                FriendlyName      = $environmentName
-                Url               = $null
-                Credentials       = $null
-                ServiceAccountUPN = $null
-                StorageScope      = $null
+
+        $deploymentBranchMappings += [pscustomobject]@{
+            BranchName   = $workflowBranchMapping.BranchName
+            Environments = @($mappedEnvironmentStates)
+            SourceBranch = $workflowBranchMapping.SourceBranch
+        }
+    }
+
+    if ($deploymentEnvironments.Count -eq 0) {
+        foreach ($environmentName in @(Get-GitHubDeploymentEnvironmentNamesFromRepoClone -RepoRoot $RepoRoot -DefaultBranch $DefaultBranch)) {
+            $environmentState = Get-GitHubExistingEnvironmentState -Owner $RepoOwner -Repo $RepoName -EnvironmentName $environmentName -TenantId $TenantId
+            if ($environmentState) {
+                $deploymentEnvironments += $environmentState
+                if (-not $storageScope -and $environmentState.StorageScope) {
+                    $storageScope = $environmentState.StorageScope
+                }
+            }
+            else {
+                $deploymentEnvironments += [pscustomobject]@{
+                    ShortName         = $environmentName
+                    FriendlyName      = $environmentName
+                    Url               = $null
+                    Credentials       = $null
+                    ServiceAccountUPN = $null
+                    StorageScope      = $null
+                }
             }
         }
+    }
+
+    if ($deploymentBranchMappings.Count -eq 0 -and $deploymentEnvironments.Count -gt 0) {
+        $deploymentBranchMappings = @(
+            [pscustomobject]@{
+                BranchName   = $DefaultBranch
+                Environments = @($deploymentEnvironments)
+                SourceBranch = $DefaultBranch
+            }
+        )
     }
 
     if (-not $storageScope -and $devEnvironment -and $devEnvironment.StorageScope) {
@@ -762,6 +973,68 @@ function Get-GitHubRepositoryExistingSetupState {
         CredentialStorageScope   = $storageScope
         DevEnvironment           = $devEnvironment
         DeploymentEnvironments   = @($deploymentEnvironments)
+        DeploymentBranchMappings = @($deploymentBranchMappings)
+    }
+}
+
+function Get-GitHubInitialBranchMappings {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object]$ExistingSetupState,
+        [Parameter(Mandatory)][string]$DefaultBranch
+    )
+
+    $branchMappings = @()
+    foreach ($mapping in @($ExistingSetupState.DeploymentBranchMappings)) {
+        if ($null -eq $mapping -or [string]::IsNullOrWhiteSpace([string]$mapping.BranchName)) {
+            continue
+        }
+
+        $branchMappings += [pscustomobject]@{
+            BranchName   = [string]$mapping.BranchName
+            Environments = @($mapping.Environments | Where-Object { $null -ne $_ })
+        }
+    }
+
+    if ($branchMappings.Count -eq 0) {
+        $defaultEnvironments = @($ExistingSetupState.DeploymentEnvironments | Where-Object { $null -ne $_ })
+        $branchMappings = @(
+            [pscustomobject]@{
+                BranchName   = $DefaultBranch
+                Environments = $defaultEnvironments
+            }
+        )
+    }
+    elseif (
+        -not ($branchMappings | Where-Object { $_.BranchName -ieq $DefaultBranch }) -and
+        $ExistingSetupState.DevEnvironment
+    ) {
+        $branchMappings += [pscustomobject]@{
+            BranchName   = $DefaultBranch
+            Environments = @()
+        }
+    }
+
+    return @($branchMappings | Sort-Object BranchName -Unique)
+}
+
+function New-GitHubBranchSetupState {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$BranchName,
+        [Parameter()][object]$ExistingDevEnvironment,
+        [Parameter()][array]$DeploymentEnvironments,
+        [Parameter()][object]$PublishPlan
+    )
+
+    $normalizedDeploymentEnvironments = @($DeploymentEnvironments | Where-Object { $null -ne $_ })
+
+    return [pscustomobject]@{
+        BranchName                  = $BranchName
+        ExistingDevEnvironment      = $ExistingDevEnvironment
+        DevEnvironmentConfiguration = $null
+        DeploymentEnvironments      = $normalizedDeploymentEnvironments
+        PublishPlan                 = $PublishPlan
     }
 }
 
@@ -942,28 +1215,90 @@ function Get-GitHubForkSyncState {
         [Parameter(Mandatory)][string]$DefaultBranch
     )
 
-    & gh repo clone $ForkFullName $WorkRoot 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to clone repository '$ForkFullName'."
+    if (Test-Path -LiteralPath $WorkRoot) {
+        try {
+            Remove-Item -LiteralPath $WorkRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+        catch {
+            # Best effort cleanup before clone.
+        }
     }
 
-    & git -C $WorkRoot checkout $DefaultBranch 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        & git -C $WorkRoot checkout -b $DefaultBranch "origin/$DefaultBranch" 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to check out repository default branch '$DefaultBranch'."
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $cloneOutput = @(& gh repo clone $ForkFullName $WorkRoot 2>&1)
+        $cloneExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    if ($cloneExitCode -ne 0) {
+        $cloneErrorDetails = @($cloneOutput | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $cloneErrorMessage = if ($cloneErrorDetails.Count -gt 0) { $cloneErrorDetails[-1] } else { "Exit code: $cloneExitCode" }
+        throw "Failed to clone repository '$ForkFullName'. $cloneErrorMessage"
+    }
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $checkoutOutput = @(& git -C $WorkRoot checkout $DefaultBranch 2>&1)
+        $checkoutExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    if ($checkoutExitCode -ne 0) {
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $checkoutOutput = @(& git -C $WorkRoot checkout -b $DefaultBranch "origin/$DefaultBranch" 2>&1)
+            $checkoutExitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+
+        if ($checkoutExitCode -ne 0) {
+            $checkoutErrorDetails = @($checkoutOutput | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            $checkoutErrorMessage = if ($checkoutErrorDetails.Count -gt 0) { $checkoutErrorDetails[-1] } else { "Exit code: $checkoutExitCode" }
+            throw "Failed to check out repository default branch '$DefaultBranch'. $checkoutErrorMessage"
         }
     }
 
     & git -C $WorkRoot remote remove upstream 2>$null | Out-Null
-    & git -C $WorkRoot remote add upstream $UpstreamGitSource 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "Failed to add upstream remote '$UpstreamGitSource'."
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $addRemoteOutput = @(& git -C $WorkRoot remote add upstream $UpstreamGitSource 2>&1)
+        $addRemoteExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
     }
 
-    & git -C $WorkRoot fetch upstream 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Failed to fetch upstream remote.'
+    if ($addRemoteExitCode -ne 0) {
+        $addRemoteErrorDetails = @($addRemoteOutput | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $addRemoteErrorMessage = if ($addRemoteErrorDetails.Count -gt 0) { $addRemoteErrorDetails[-1] } else { "Exit code: $addRemoteExitCode" }
+        throw "Failed to add upstream remote '$UpstreamGitSource'. $addRemoteErrorMessage"
+    }
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $fetchUpstreamOutput = @(& git -C $WorkRoot fetch upstream 2>&1)
+        $fetchUpstreamExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    if ($fetchUpstreamExitCode -ne 0) {
+        $fetchUpstreamErrorDetails = @($fetchUpstreamOutput | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $fetchUpstreamErrorMessage = if ($fetchUpstreamErrorDetails.Count -gt 0) { $fetchUpstreamErrorDetails[-1] } else { "Exit code: $fetchUpstreamExitCode" }
+        throw "Failed to fetch upstream remote. $fetchUpstreamErrorMessage"
     }
 
     $upstreamRef = Resolve-GitTargetRefFromRemote -RemoteName 'upstream' -Ref $Reference -RepositoryPath $WorkRoot
@@ -974,11 +1309,41 @@ function Get-GitHubForkSyncState {
 
     $canonicalUpstreamSource = Resolve-UpstreamGitRemoteSource -ConfiguredSource $UpstreamFullName -GitHubFullName $UpstreamFullName
     if (-not [string]::IsNullOrWhiteSpace($canonicalUpstreamSource)) {
-        & git -C $WorkRoot remote remove upstream-github 2>$null | Out-Null
-        & git -C $WorkRoot remote add upstream-github $canonicalUpstreamSource 2>&1 | Out-Null
-        if ($LASTEXITCODE -eq 0) {
-            & git -C $WorkRoot fetch upstream-github $DefaultBranch 2>&1 | Out-Null
-            if ($LASTEXITCODE -eq 0) {
+        $remoteNames = @(& git -C $WorkRoot remote 2>$null)
+        $hasCanonicalUpstreamRemote = (@($remoteNames | ForEach-Object { [string]$_ } | Where-Object { $_ -eq 'upstream-github' }).Count -gt 0)
+        if ($hasCanonicalUpstreamRemote) {
+            $previousErrorActionPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = 'Continue'
+                [void](& git -C $WorkRoot remote remove upstream-github 2>&1)
+            }
+            finally {
+                $ErrorActionPreference = $previousErrorActionPreference
+            }
+        }
+
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            [void](& git -C $WorkRoot remote add upstream-github $canonicalUpstreamSource 2>&1)
+            $addCanonicalRemoteExitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorActionPreference
+        }
+
+        if ($addCanonicalRemoteExitCode -eq 0) {
+            $previousErrorActionPreference = $ErrorActionPreference
+            try {
+                $ErrorActionPreference = 'Continue'
+                [void](& git -C $WorkRoot fetch upstream-github $DefaultBranch 2>&1)
+                $fetchCanonicalRemoteExitCode = $LASTEXITCODE
+            }
+            finally {
+                $ErrorActionPreference = $previousErrorActionPreference
+            }
+
+            if ($fetchCanonicalRemoteExitCode -eq 0) {
                 $canonicalUpstreamHash = (& git -C $WorkRoot rev-parse "upstream-github/$DefaultBranch").Trim()
                 $matchesCanonicalUpstreamDefault = ($localHash -eq $canonicalUpstreamHash)
             }
@@ -1138,15 +1503,24 @@ function Ensure-GitHubForkForSharedWorkflows {
         return -not $forkFullNameMap.ContainsKey($repoFullName.ToLowerInvariant())
     })
 
+    $menuItems += 'Create a new repository'
+    $menuActions += @{ Type = 'CreateNew' }
+
     foreach ($repo in $nonForkRepos) {
         $menuItems += "Use existing repository: $($repo.full_name)"
         $menuActions += @{ Type = 'UseExisting'; FullName = $repo.full_name }
     }
 
-    $menuItems += 'Create a new repository'
-    $menuActions += @{ Type = 'CreateNew' }
+  
 
-    $selection = Select-FromMenu -Title "Select shared workflow repository" -Items $menuItems
+    $selection = Select-FromMenu `
+        -Title "Select shared workflow repository" `
+        -Items $menuItems `
+        -PromptGuidanceLines @(
+            'Choose or create a repository that will host the reusable ALM4Dataverse workflow templates.'
+        ) `
+        -PromptGuidanceDocRelativePath 'docs/setup/github-setup.md' `
+        -PromptGuidanceRef $ALM4DataverseRef
     if ($null -eq $selection) {
         throw "No shared workflow repository selected."
     }
@@ -1181,7 +1555,10 @@ function Ensure-GitHubForkForSharedWorkflows {
             'Public (fork)',
             'Private'
         )
-        $creationModeSelection = Select-FromMenu -Title "How should '$selectedSharedRepositoryFullName' be created?" -Items $creationModeItems
+        $creationModeSelection = Select-FromMenu -Title "How should '$selectedSharedRepositoryFullName' be created?" -Items $creationModeItems -PromptGuidanceLines @(
+            'Choose whether the shared workflow repository should be public (fork style) or private.',
+            'Pick an option that target repositories can access for reusable workflow calls.'
+        ) -PromptGuidanceDocRelativePath 'docs/setup/github-setup.md' -PromptGuidanceRef $ALM4DataverseRef
         if ($null -eq $creationModeSelection) {
             throw 'No shared workflow repository type selected.'
         }
@@ -1254,13 +1631,21 @@ function Ensure-GitHubForkForSharedWorkflows {
         else {
             if ($createdNewSharedRepository -or $forkSyncState.MatchesCanonicalUpstreamDefault) {
                 Invoke-WithErrorHandling -OperationName "Aligning shared workflow repository '$selectedSharedRepositoryFullName'" -StatusMessage "Aligning shared workflow repository '$selectedSharedRepositoryFullName' to ref '$Reference'..." -CaptureOutputInPanel -ScriptBlock {
-                    & git -C $workRoot reset --hard $forkSyncState.UpstreamRef 2>&1 | Out-Host
-                    if ($LASTEXITCODE -ne 0) {
-                        throw "Failed to align shared workflow repository '$selectedSharedRepositoryFullName' to ref '$Reference'."
-                    }
+                    $previousErrorActionPreference = $ErrorActionPreference
+                    try {
+                        $ErrorActionPreference = 'Continue'
 
-                    & git -C $workRoot push --force-with-lease origin $defaultBranch 2>&1 | Out-Host
-                    if ($LASTEXITCODE -ne 0) { throw 'Git push failed.' }
+                        & git -C $workRoot reset --hard $forkSyncState.UpstreamRef 2>&1 | Out-Host
+                        if ($LASTEXITCODE -ne 0) {
+                            throw "Failed to align shared workflow repository '$selectedSharedRepositoryFullName' to ref '$Reference'."
+                        }
+
+                        & git -C $workRoot push --force-with-lease origin $defaultBranch 2>&1 | Out-Host
+                        if ($LASTEXITCODE -ne 0) { throw 'Git push failed.' }
+                    }
+                    finally {
+                        $ErrorActionPreference = $previousErrorActionPreference
+                    }
                 } | Out-Null
 
                 Write-Host "Shared workflow repository aligned successfully."
@@ -1270,11 +1655,19 @@ function Ensure-GitHubForkForSharedWorkflows {
             if ($forkSyncState.CanFastForward) {
                 if (Read-YesNo -Prompt "Updates are available from upstream (fast-forward). Update '$selectedSharedRepositoryFullName'?" ) {
                     Invoke-WithErrorHandling -OperationName "Fast-forwarding shared workflow repository '$selectedSharedRepositoryFullName'" -StatusMessage "Fast-forwarding shared workflow repository '$selectedSharedRepositoryFullName'..." -CaptureOutputInPanel -ScriptBlock {
-                        & git -C $workRoot merge --ff-only $forkSyncState.UpstreamRef 2>&1 | Out-Host
-                        if ($LASTEXITCODE -ne 0) { throw 'Git merge failed.' }
+                        $previousErrorActionPreference = $ErrorActionPreference
+                        try {
+                            $ErrorActionPreference = 'Continue'
 
-                        & git -C $workRoot push origin $defaultBranch 2>&1 | Out-Host
-                        if ($LASTEXITCODE -ne 0) { throw 'Git push failed.' }
+                            & git -C $workRoot merge --ff-only $forkSyncState.UpstreamRef 2>&1 | Out-Host
+                            if ($LASTEXITCODE -ne 0) { throw 'Git merge failed.' }
+
+                            & git -C $workRoot push origin $defaultBranch 2>&1 | Out-Host
+                            if ($LASTEXITCODE -ne 0) { throw 'Git push failed.' }
+                        }
+                        finally {
+                            $ErrorActionPreference = $previousErrorActionPreference
+                        }
                     } | Out-Null
 
                     Write-Host "Shared workflow repository updated successfully."
@@ -1290,31 +1683,50 @@ function Ensure-GitHubForkForSharedWorkflows {
                         "Reset '$selectedSharedRepositoryFullName' '$defaultBranch' to ref '$Reference' (force push)",
                         "Leave '$selectedSharedRepositoryFullName' unchanged"
                     )
-                    $divergedSelection = Select-FromMenu -Title "Shared workflow repository '$selectedSharedRepositoryFullName' has diverged from upstream. Choose how to update it." -Items $divergedMenuItems
+                    $divergedSelection = Select-FromMenu -Title "Shared workflow repository '$selectedSharedRepositoryFullName' has diverged from upstream. Choose how to update it." -Items $divergedMenuItems -PromptGuidanceLines @(
+                        'Choose how to reconcile divergence between your shared repository and upstream templates.',
+                        'Rebase preserves local commits, reset force-aligns to upstream, and leave keeps the current state.'
+                    ) -PromptGuidanceDocRelativePath 'docs/setup/github-setup.md' -PromptGuidanceRef $ALM4DataverseRef
 
                     switch ($divergedSelection) {
                         0 {
                             Invoke-WithErrorHandling -OperationName "Rebasing shared workflow repository '$selectedSharedRepositoryFullName'" -StatusMessage "Rebasing shared workflow repository '$selectedSharedRepositoryFullName' onto '$Reference'..." -CaptureOutputInPanel -ScriptBlock {
-                                & git -C $workRoot rebase $forkSyncState.UpstreamRef 2>&1 | Out-Host
-                                if ($LASTEXITCODE -ne 0) {
-                                    throw "Git rebase failed - resolve conflicts manually in '$selectedSharedRepositoryFullName'."
-                                }
+                                $previousErrorActionPreference = $ErrorActionPreference
+                                try {
+                                    $ErrorActionPreference = 'Continue'
 
-                                & git -C $workRoot push --force-with-lease origin $defaultBranch 2>&1 | Out-Host
-                                if ($LASTEXITCODE -ne 0) { throw 'Git push failed.' }
+                                    & git -C $workRoot rebase $forkSyncState.UpstreamRef 2>&1 | Out-Host
+                                    if ($LASTEXITCODE -ne 0) {
+                                        throw "Git rebase failed - resolve conflicts manually in '$selectedSharedRepositoryFullName'."
+                                    }
+
+                                    & git -C $workRoot push --force-with-lease origin $defaultBranch 2>&1 | Out-Host
+                                    if ($LASTEXITCODE -ne 0) { throw 'Git push failed.' }
+                                }
+                                finally {
+                                    $ErrorActionPreference = $previousErrorActionPreference
+                                }
                             } | Out-Null
 
                             Write-Host "Shared workflow repository updated successfully."
                         }
                         1 {
                             Invoke-WithErrorHandling -OperationName "Resetting shared workflow repository '$selectedSharedRepositoryFullName'" -StatusMessage "Resetting shared workflow repository '$selectedSharedRepositoryFullName' to '$Reference'..." -CaptureOutputInPanel -ScriptBlock {
-                                & git -C $workRoot reset --hard $forkSyncState.UpstreamRef 2>&1 | Out-Host
-                                if ($LASTEXITCODE -ne 0) {
-                                    throw "Failed to reset shared workflow repository '$selectedSharedRepositoryFullName' to ref '$Reference'."
-                                }
+                                $previousErrorActionPreference = $ErrorActionPreference
+                                try {
+                                    $ErrorActionPreference = 'Continue'
 
-                                & git -C $workRoot push --force-with-lease origin $defaultBranch 2>&1 | Out-Host
-                                if ($LASTEXITCODE -ne 0) { throw 'Git push failed.' }
+                                    & git -C $workRoot reset --hard $forkSyncState.UpstreamRef 2>&1 | Out-Host
+                                    if ($LASTEXITCODE -ne 0) {
+                                        throw "Failed to reset shared workflow repository '$selectedSharedRepositoryFullName' to ref '$Reference'."
+                                    }
+
+                                    & git -C $workRoot push --force-with-lease origin $defaultBranch 2>&1 | Out-Host
+                                    if ($LASTEXITCODE -ne 0) { throw 'Git push failed.' }
+                                }
+                                finally {
+                                    $ErrorActionPreference = $previousErrorActionPreference
+                                }
                             } | Out-Null
 
                             Write-Host "Shared workflow repository updated successfully."
@@ -1366,7 +1778,10 @@ function New-GitHubRepositoryInteractive {
     }
 
     $visibilityItems = @('Private', 'Public')
-    $visibilitySelection = Select-FromMenu -Title "Select repository visibility" -Items $visibilityItems
+    $visibilitySelection = Select-FromMenu -Title "Select repository visibility" -Items $visibilityItems -PromptGuidanceLines @(
+        'Choose whether the new repository should be private or public.',
+        'Private is recommended unless you intentionally want public visibility.'
+    ) -PromptGuidanceDocRelativePath 'docs/setup/github-setup.md' -PromptGuidanceRef $ALM4DataverseRef
     if ($null -eq $visibilitySelection) {
         throw "No repository visibility selected."
     }
@@ -1586,9 +2001,12 @@ function Get-GitHubCredentialsForEnvironment {
     Write-SetupGuidance -Lines @(
         "App Registration credentials are used to authenticate the workflow to Dataverse.",
         "Best practice: use a separate App Registration per environment and prefer Workload Identity Federation where possible."
-    ) -DocRelativePath 'docs/config/github-secrets.md' -Ref $ALM4DataverseRef
+    ) -DocRelativePath 'docs/config/github-secrets.md' -Ref $ALM4DataverseRef -Header 'App registration guidance'
     
-    $selection = Select-FromMenu -Title "Select App Registration credentials for '$EnvironmentName'" -Items $menuItems
+    $selection = Select-FromMenu -Title "Select App Registration credentials for '$EnvironmentName'" -Items $menuItems -PromptGuidanceLines @(
+        'Select existing credentials or create a new App Registration for this environment.',
+        'Prefer workload identity federation where possible to avoid client-secret rotation overhead.'
+    ) -PromptGuidanceDocRelativePath 'docs/config/github-secrets.md' -PromptGuidanceRef $ALM4DataverseRef
     if ($null -eq $selection) { throw "No credential selected." }
 
     $action = $menuActions[$selection]
@@ -1602,7 +2020,10 @@ function Get-GitHubCredentialsForEnvironment {
                 'Generate a new client secret now'
             )
 
-            $secretHandlingSelection = Select-FromMenu -Title "How should setup handle the existing client secret for '$EnvironmentName'?" -Items $secretHandlingItems
+            $secretHandlingSelection = Select-FromMenu -Title "How should setup handle the existing client secret for '$EnvironmentName'?" -Items $secretHandlingItems -PromptGuidanceLines @(
+                'Choose whether to keep the existing secret or rotate it now.',
+                'Rotate when policy requires periodic renewal or the current secret is no longer trusted.'
+            ) -PromptGuidanceDocRelativePath 'docs/config/github-secrets.md' -PromptGuidanceRef $ALM4DataverseRef
             if ($null -eq $secretHandlingSelection) {
                 throw 'No client secret handling option selected.'
             }
@@ -1641,7 +2062,10 @@ function Get-GitHubCredentialsForEnvironment {
             "Workload Identity Federation (recommended, no secrets)",
             "Service Principal with Secret (traditional)"
         )
-        $authTypeSelection = Select-FromMenu -Title "Select authentication type for the new App Registration" -Items $authTypeItems
+        $authTypeSelection = Select-FromMenu -Title "Select authentication type for the new App Registration" -Items $authTypeItems -PromptGuidanceLines @(
+            'Choose between workload identity federation and client-secret authentication.',
+            'Workload identity federation is recommended when supported because it removes shared secret management.'
+        ) -PromptGuidanceDocRelativePath 'docs/config/github-secrets.md' -PromptGuidanceRef $ALM4DataverseRef
         if ($null -eq $authTypeSelection) { throw "No authentication type selected." }
         
         $authType = if ($authTypeSelection -eq 0) { 'WIF' } else { 'Secret' }
@@ -1681,7 +2105,10 @@ function Get-GitHubCredentialsForEnvironment {
             "Workload Identity Federation (recommended, no secrets)",
             "Service Principal with Secret (traditional)"
         )
-        $authTypeSelection = Select-FromMenu -Title "Select authentication type" -Items $authTypeItems
+        $authTypeSelection = Select-FromMenu -Title "Select authentication type" -Items $authTypeItems -PromptGuidanceLines @(
+            'Choose the authentication mode for the provided App Registration details.',
+            'Use secret-based auth only when workload identity federation is not suitable for your scenario.'
+        ) -PromptGuidanceDocRelativePath 'docs/config/github-secrets.md' -PromptGuidanceRef $ALM4DataverseRef
         if ($null -eq $authTypeSelection) { throw "No authentication type selected." }
         
         $authType = if ($authTypeSelection -eq 0) { 'WIF' } else { 'Secret' }
@@ -1792,7 +2219,10 @@ function Select-DataverseEnvironment {
         [Parameter()][string]$ExcludeUrl,
         [Parameter()][string]$PreferredUrl,
         [Parameter()][string]$PreferredSelectionSummary,
-        [Parameter()][switch]$KeepPreferredInList
+        [Parameter()][switch]$KeepPreferredInList,
+        [Parameter()][string[]]$PromptGuidanceLines,
+        [Parameter()][string]$PromptGuidanceDocRelativePath,
+        [Parameter()][string]$PromptGuidanceRef
     )
 
     Write-Host ""
@@ -1849,7 +2279,12 @@ function Select-DataverseEnvironment {
         $menuActions += [pscustomobject]@{ Environment = $environment }
     }
     
-    $index = Select-FromMenu -Title $Prompt -Items $menuItems
+    $index = Select-FromMenu `
+        -Title $Prompt `
+        -Items $menuItems `
+        -PromptGuidanceLines $PromptGuidanceLines `
+        -PromptGuidanceDocRelativePath $PromptGuidanceDocRelativePath `
+        -PromptGuidanceRef $PromptGuidanceRef
     if ($null -eq $index) { return $null }
 
     return $menuActions[$index].Environment
@@ -2023,9 +2458,17 @@ function Get-DataverseServiceAccountUPN {
         "Service Account credentials are used for ownership and licensing of Cloud Flows.",
         "Use a licensed user account with System Administrator role.",
         "Best practice: keep this separate from your personal admin account so automation ownership stays stable."
-    ) -DocRelativePath 'docs/config/github-secrets.md' -Ref $ALM4DataverseRef
+    ) -DocRelativePath 'docs/config/github-secrets.md' -Ref $ALM4DataverseRef -Header 'Service account guidance'
     
-    $selection = Select-FromMenu -Title "Select Dataverse Service Account for '$EnvironmentName'" -Items $menuItems
+    $selection = Select-FromMenu `
+        -Title "Select Dataverse Service Account for '$EnvironmentName'" `
+        -Items $menuItems `
+        -PromptGuidanceLines @(
+            "Choose the service account UPN that should own flow activation and runtime ownership in '$EnvironmentName'.",
+            'Reusing an existing service account keeps ownership consistent; entering a new one changes who owns activated processes.'
+        ) `
+        -PromptGuidanceDocRelativePath 'docs/config/github-secrets.md' `
+        -PromptGuidanceRef $ALM4DataverseRef
     if ($null -eq $selection) { throw "No service account selected." }
 
     $action = $menuActions[$selection]
@@ -2067,10 +2510,19 @@ function Get-DataverseSolutionsSelection {
         "Select the Dataverse DEV environment that contains the unmanaged solutions you want ALM4Dataverse to export and build from source control.",
         "The selected environment becomes the source of truth for solution discovery during setup, so choose the DEV environment that your team actively customises in.",
         "Best practice: add solutions in dependency order because that is the order written into alm-config.psd1 and later reused by the automation."
-    ) -DocRelativePath 'docs/config/alm-config.md' -Ref $ALM4DataverseRef
+    ) -DocRelativePath 'docs/config/alm-config.md' -Ref $ALM4DataverseRef -Header 'Solution source guidance'
 
     $existingEnvironmentSummary = Get-GitHubExistingEnvironmentSelectionSummary -ExistingEnvironment $ExistingEnvironmentConfiguration
-    $selectedEnv = Select-DataverseEnvironment -Prompt "Select your DEV environment" -PreferredUrl $ExistingEnvironmentUrl -PreferredSelectionSummary $existingEnvironmentSummary
+    $selectedEnv = Select-DataverseEnvironment `
+        -Prompt "Select your DEV environment" `
+        -PreferredUrl $ExistingEnvironmentUrl `
+        -PreferredSelectionSummary $existingEnvironmentSummary `
+        -PromptGuidanceLines @(
+            'Choose the DEV Dataverse environment used to discover unmanaged solutions for alm-config.psd1.',
+            'Pick the environment that currently reflects the source-controlled customization baseline.'
+        ) `
+        -PromptGuidanceDocRelativePath 'docs/config/alm-config.md' `
+        -PromptGuidanceRef $ALM4DataverseRef
     if (-not $selectedEnv) { throw "No environment selected." }
 
     $devEnvUrl = ConvertTo-NormalizedEnvironmentUrl -Url $selectedEnv.Endpoints["WebApplication"]
@@ -2267,14 +2719,16 @@ function Copy-WorkflowTemplatesToRepo {
         [Parameter(Mandatory)][string]$TargetRoot,
         [Parameter(Mandatory)][string]$Branch,
         [Parameter(Mandatory)][string]$SharedWorkflowRepository,
-        [Parameter(Mandatory)][string]$SharedWorkflowRef
+        [Parameter(Mandatory)][string]$SharedWorkflowRef,
+        [Parameter()][switch]$SkipDeployWorkflow
     )
 
     if (-not (Test-Path -LiteralPath $SourceRoot)) {
         throw "Source folder not found: $SourceRoot"
     }
 
-    Write-Section "Syncing workflow files into repository"
+    Write-Section `
+        -Message "Syncing workflow files into repository"
     Write-Host "Source: $SourceRoot" -ForegroundColor DarkGray
     Write-Host "Target: $TargetRoot" -ForegroundColor DarkGray
 
@@ -2303,6 +2757,7 @@ function Copy-WorkflowTemplatesToRepo {
         $isTempFile      = $false
 
         # Patch all shared workflow references (build/export/import/deploy/etc.) to the selected repository/ref.
+        # BUILD.yml repository_dispatch branch/SHA resolution is template-driven and is copied verbatim.
         if ($normalizedRelativePath -like '.github/workflows/*.yml') {
             $content = Get-Content -LiteralPath $sourceFileToUse -Raw
             $updatedContent = [Regex]::Replace(
@@ -2329,6 +2784,10 @@ function Copy-WorkflowTemplatesToRepo {
 
         # Rename DEPLOY-main.yml to match the branch, and patch branch references
         if ($normalizedRelativePath -eq '.github/workflows/DEPLOY-main.yml') {
+            if ($SkipDeployWorkflow) {
+                continue
+            }
+
             $destPath = Join-Path $TargetRoot ".github/workflows/DEPLOY-$Branch.yml"
             
             $content = Get-Content -LiteralPath $sourceFileToUse -Raw
@@ -2410,12 +2869,20 @@ function Update-DeployWorkflowInRepoClone {
         [Parameter()][ValidateSet('manual-gate-tag','environment-approval')][string]$PromotionMode = 'manual-gate-tag'
     )
 
+    $deployFilePath = Join-Path $RepoRoot ".github/workflows/DEPLOY-$Branch.yml"
+
     if (-not $DeploymentEnvironments -or $DeploymentEnvironments.Count -eq 0) {
-        Write-Host "No deployment environments selected; keeping default DEPLOY workflow template." -ForegroundColor Yellow
+        if (Test-Path -LiteralPath $deployFilePath) {
+            Remove-Item -LiteralPath $deployFilePath -Force
+            Write-Host "Removed DEPLOY workflow '$deployFilePath' because branch '$Branch' has no deployment environments configured." -ForegroundColor Yellow
+        }
+        else {
+            Write-Host "No deployment environments selected for branch '$Branch'; no DEPLOY workflow file will be created." -ForegroundColor Yellow
+        }
+
         return
     }
 
-    $deployFilePath = Join-Path $RepoRoot ".github/workflows/DEPLOY-$Branch.yml"
     if (-not (Test-Path -LiteralPath $deployFilePath)) {
         throw "Deploy workflow file not found: $deployFilePath"
     }
@@ -2438,7 +2905,7 @@ function Update-DeployWorkflowInRepoClone {
     $lines.Add('#   1. Add it to workflow_dispatch target-environment options.')
     $lines.Add('#   2. Add a deploy-* job and chain needs to the previous stage.')
     $lines.Add('#   3. Set previous-environment-name to the previous stage short name.')
-    $lines.Add('#   4. In environment-approval mode, keep the workflow_run trigger enabled.')
+    $lines.Add('#   4. In environment-approval mode, keep the repository_dispatch trigger enabled.')
     $lines.Add('')
     $lines.Add('permissions:')
     $lines.Add('  actions: read')
@@ -2447,10 +2914,13 @@ function Update-DeployWorkflowInRepoClone {
     $lines.Add('')
     $lines.Add('on:')
     if ($PromotionMode -eq 'environment-approval') {
-        $lines.Add('  workflow_run:')
-        $lines.Add("    workflows: ['BUILD']")
-        $lines.Add('    types: [completed]')
-        $lines.Add("    branches: [ '$Branch' ]")
+        $dispatchBranchToken = ($Branch.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
+        if ([string]::IsNullOrWhiteSpace($dispatchBranchToken)) {
+            throw "Could not derive repository_dispatch event type token from branch '$Branch'."
+        }
+
+        $lines.Add('  repository_dispatch:')
+        $lines.Add("    types: ['alm4dataverse-build-deploy-$dispatchBranchToken']")
     }
     $lines.Add('  workflow_dispatch:')
     $lines.Add('    inputs:')
@@ -2542,6 +3012,7 @@ function Update-DeployWorkflowInRepoClone {
             $lines.Add("      previous-environment-name: '$prevEscaped'")
         }
         $lines.Add("      promotion-mode: $PromotionMode")
+        $lines.Add("      trigger-branch: '$Branch'")
         $lines.Add('      github-context-json: ${{ toJSON(github) }}')
         $lines.Add('      caller-inputs-json: ${{ toJSON(inputs) }}')
         $lines.Add('      timeout-minutes: 360')
@@ -2567,7 +3038,9 @@ function Publish-GitHubRepoChanges {
     )
 
     Push-Location $RepoRoot
+    $previousErrorActionPreference = $ErrorActionPreference
     try {
+        $ErrorActionPreference = 'Continue'
         & git add -A
         if ($LASTEXITCODE -ne 0) { throw 'Git add failed.' }
 
@@ -2575,6 +3048,10 @@ function Publish-GitHubRepoChanges {
         $hasChanges = ($LASTEXITCODE -ne 0)
 
         if (-not $hasChanges) {
+            Write-Host "No content changes detected, but ensuring branch '$($PublishPlan.BranchName)' exists on origin..." -ForegroundColor Yellow
+            & git push -u origin $PublishPlan.BranchName 2>&1
+            if ($LASTEXITCODE -ne 0) { throw 'Git push failed.' }
+
             Write-Host 'No changes to commit; repository already contains the required files.' -ForegroundColor Green
             return [pscustomobject]@{
                 HasChanges     = $false
@@ -2634,7 +3111,1195 @@ function Publish-GitHubRepoChanges {
         }
     }
     finally {
+        $ErrorActionPreference = $previousErrorActionPreference
         Pop-Location
+    }
+}
+
+function Publish-GitHubBranchSetupChanges {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RepoRoot,
+        [Parameter(Mandatory)][string]$ConfiguredBranch,
+        [Parameter(Mandatory)][object]$PublishPlan,
+        [Parameter(Mandatory)][string]$DefaultBranch,
+        [Parameter(Mandatory)][string]$CopyRoot,
+        [Parameter(Mandatory)][string]$SharedWorkflowRepository,
+        [Parameter(Mandatory)][string]$SharedWorkflowReference,
+        [Parameter(Mandatory)][string]$PromotionMode,
+        [Parameter()][array]$Solutions,
+        [Parameter()][array]$DeploymentEnvironments,
+        [Parameter()][array]$DeployWorkflowBranchDefinitions,
+        [Parameter()][switch]$SkipDeployWorkflow
+    )
+
+    Push-Location $RepoRoot
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        & git fetch origin '+refs/heads/*:refs/remotes/origin/*' --prune 2>&1 | Out-Null
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Failed to refresh remote branches before publishing.'
+        }
+
+        & git reset --hard HEAD 2>&1 | Out-Null
+        & git clean -fd 2>&1 | Out-Null
+
+        & git ls-remote --exit-code --heads origin $ConfiguredBranch 2>&1 | Out-Null
+        $targetBranchExistsOnOrigin = ($LASTEXITCODE -eq 0)
+
+        & git ls-remote --exit-code --heads origin $DefaultBranch 2>&1 | Out-Null
+        $defaultBranchExistsOnOrigin = ($LASTEXITCODE -eq 0)
+
+        $seedRef = if ($targetBranchExistsOnOrigin) {
+            "origin/$ConfiguredBranch"
+        }
+        elseif ($defaultBranchExistsOnOrigin) {
+            "origin/$DefaultBranch"
+        }
+        else {
+            $null
+        }
+
+        if ($PublishPlan.Mode -eq 'PullRequest' -and -not $targetBranchExistsOnOrigin) {
+            Write-Host "Initializing target branch '$ConfiguredBranch' on origin before creating a pull request..." -ForegroundColor Yellow
+
+            if ($seedRef) {
+                & git checkout -B $ConfiguredBranch $seedRef 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Failed to create local target branch '$ConfiguredBranch' from '$seedRef'."
+                }
+            }
+            else {
+                & git checkout --orphan $ConfiguredBranch 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Failed to create orphan target branch '$ConfiguredBranch'."
+                }
+            }
+
+            & git config user.name 'ALM4Dataverse Setup' 2>$null
+            & git config user.email 'setup@alm4dataverse.local' 2>$null
+
+            & git rev-parse --verify HEAD 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                & git commit --allow-empty -m "Initialize repository branch '$ConfiguredBranch' for ALM4Dataverse setup" 2>&1 | Out-Null
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Failed to create initial commit for branch '$ConfiguredBranch'."
+                }
+            }
+
+            & git push -u origin $ConfiguredBranch 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to push target branch '$ConfiguredBranch' to origin."
+            }
+
+            $targetBranchExistsOnOrigin = $true
+            $seedRef = $ConfiguredBranch
+        }
+
+        if ($PublishPlan.Mode -eq 'PullRequest') {
+            $workingBaseRef = if ($targetBranchExistsOnOrigin) { "origin/$ConfiguredBranch" } elseif ($seedRef) { $seedRef } else { 'HEAD' }
+            & git checkout -B $PublishPlan.BranchName $workingBaseRef 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to create or switch to working branch '$($PublishPlan.BranchName)'."
+            }
+        }
+        else {
+            $directBaseRef = if ($targetBranchExistsOnOrigin) { "origin/$ConfiguredBranch" } elseif ($seedRef) { $seedRef } else { 'HEAD' }
+            & git checkout -B $ConfiguredBranch $directBaseRef 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "Failed to create or switch to target branch '$ConfiguredBranch'."
+            }
+        }
+
+        Copy-WorkflowTemplatesToRepo `
+            -SourceRoot $CopyRoot `
+            -TargetRoot $RepoRoot `
+            -Branch $ConfiguredBranch `
+            -SharedWorkflowRepository $SharedWorkflowRepository `
+            -SharedWorkflowRef $SharedWorkflowReference `
+            -SkipDeployWorkflow:$SkipDeployWorkflow
+
+        if ($Solutions) {
+            Update-AlmConfigInRepoClone -Solutions @($Solutions) -RepoRoot $RepoRoot
+        }
+
+        if (-not $SkipDeployWorkflow) {
+            $effectiveDeployWorkflowDefinitions = @()
+            if ($DeployWorkflowBranchDefinitions -and @($DeployWorkflowBranchDefinitions).Count -gt 0) {
+                $effectiveDeployWorkflowDefinitions = @($DeployWorkflowBranchDefinitions)
+            }
+            else {
+                $effectiveDeployWorkflowDefinitions = @(
+                    [pscustomobject]@{
+                        BranchName             = $ConfiguredBranch
+                        DeploymentEnvironments = @($DeploymentEnvironments)
+                    }
+                )
+            }
+
+            foreach ($deployDefinition in @($effectiveDeployWorkflowDefinitions)) {
+                $workflowBranchName = [string]$deployDefinition.BranchName
+                $workflowDeploymentEnvironments = @($deployDefinition.DeploymentEnvironments)
+
+                if ([string]::IsNullOrWhiteSpace($workflowBranchName)) {
+                    continue
+                }
+
+                if ($workflowBranchName -ne $ConfiguredBranch -and $workflowDeploymentEnvironments.Count -gt 0) {
+                    Copy-WorkflowTemplatesToRepo `
+                        -SourceRoot $CopyRoot `
+                        -TargetRoot $RepoRoot `
+                        -Branch $workflowBranchName `
+                        -SharedWorkflowRepository $SharedWorkflowRepository `
+                        -SharedWorkflowRef $SharedWorkflowReference
+                }
+
+                Update-DeployWorkflowInRepoClone `
+                    -RepoRoot $RepoRoot `
+                    -Branch $workflowBranchName `
+                    -DeploymentEnvironments $workflowDeploymentEnvironments `
+                    -SharedWorkflowRepository $SharedWorkflowRepository `
+                    -SharedWorkflowRef $SharedWorkflowReference `
+                    -PromotionMode $PromotionMode
+            }
+        }
+
+        return Publish-GitHubRepoChanges -RepoRoot $RepoRoot -PublishPlan $PublishPlan
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+        Pop-Location
+    }
+}
+
+function Get-GitHubPublishSummaryText {
+    [CmdletBinding()]
+    param(
+        [Parameter()][array]$PublishResults
+    )
+
+    $results = @($PublishResults | Where-Object { $null -ne $_ })
+    if ($results.Count -eq 0) {
+        return 'No repository changes were needed'
+    }
+
+    $changedResults = @($results | Where-Object { $_.HasChanges })
+    if ($changedResults.Count -eq 0) {
+        return 'No repository changes were needed'
+    }
+
+    $pullRequestResults = @($changedResults | Where-Object { $_.Mode -eq 'PullRequest' })
+    $directResults = @($changedResults | Where-Object { $_.Mode -ne 'PullRequest' })
+
+    $summaryParts = @()
+    if ($directResults.Count -gt 0) {
+        $summaryParts += "$($directResults.Count) direct branch update(s)"
+    }
+    if ($pullRequestResults.Count -gt 0) {
+        $summaryParts += "$($pullRequestResults.Count) pull request branch update(s)"
+    }
+
+    return ($summaryParts -join ' - ')
+}
+
+function Invoke-GitHubBranchAwareSetup {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$CloneRoot,
+        [Parameter(Mandatory)][string]$RepoOwner,
+        [Parameter(Mandatory)][string]$RepoName,
+        [Parameter(Mandatory)][string]$RepoFullName,
+        [Parameter(Mandatory)][string]$DefaultBranch,
+        [Parameter(Mandatory)][string]$TenantId,
+        [Parameter(Mandatory)][object]$ExistingSetupState,
+        [Parameter(Mandatory)][string]$SharedWorkflowRepository,
+        [Parameter(Mandatory)][string]$SharedWorkflowReference,
+        [Parameter(Mandatory)][string]$UpstreamGitSource,
+        [Parameter(Mandatory)][string]$ALM4DataverseRef,
+        [Parameter(Mandatory)][bool]$UseGitHubEnvironments,
+        [Parameter(Mandatory)][bool]$EnableEnvironmentApprovals,
+        [Parameter()][array]$EnvironmentApprovalReviewerIds = @(),
+        [Parameter(Mandatory)][string]$DeploymentPromotionMode
+    )
+
+    $cachedCredentials = @()
+    $cachedServiceAccounts = @()
+    $publishResults = @()
+    $solutionResult = $null
+    $solutionSourceBranch = $null
+    $copyRoot = $null
+    $upstreamClone = $null
+
+    $initialBranchMappings = @(Get-GitHubInitialBranchMappings -ExistingSetupState $ExistingSetupState -DefaultBranch $DefaultBranch)
+    $branchStates = @()
+    foreach ($mapping in $initialBranchMappings) {
+        $branchName = [string]$mapping.BranchName
+        $existingDevEnvironment = if ($branchName -ieq $DefaultBranch) {
+            $ExistingSetupState.DevEnvironment
+        }
+        else {
+            Get-GitHubExistingEnvironmentState -Owner $RepoOwner -Repo $RepoName -EnvironmentName "Dev-$branchName" -TenantId $TenantId
+        }
+
+        $branchStates += New-GitHubBranchSetupState -BranchName $branchName -ExistingDevEnvironment $existingDevEnvironment -DeploymentEnvironments @($mapping.Environments)
+    }
+
+    if ($PSScriptRoot) {
+        $copyRoot = Join-Path $PSScriptRoot 'copy-to-your-repo'
+    }
+
+    if (-not $copyRoot -or -not (Test-Path -LiteralPath $copyRoot)) {
+        $upstreamClone = Join-Path ([System.IO.Path]::GetTempPath()) ("ALM4Dataverse-Templates-" + [guid]::NewGuid().ToString('n'))
+        New-DirectoryIfMissing -Path $upstreamClone
+
+        Invoke-WithErrorHandling -OperationName 'Fetching workflow templates' -StatusMessage 'Fetching workflow templates from the selected ALM4Dataverse source...' -CaptureOutputInPanel -ScriptBlock {
+            & git clone --depth 1 --branch $ALM4DataverseRef $UpstreamGitSource $upstreamClone 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw 'Failed to clone ALM4Dataverse templates.'
+            }
+        } | Out-Null
+
+        $copyRoot = Join-Path $upstreamClone 'copy-to-your-repo'
+    }
+
+    try {
+        $wizardState = [pscustomobject]@{
+            BranchStates        = @($branchStates)
+            SolutionResult      = $null
+            SolutionSourceBranch = $null
+            BranchEnvironmentMappingCompleted = $false
+        }
+
+        Invoke-SetupWizard -Title 'GitHub Actions ALM4Dataverse setup' -Steps @(
+            [pscustomobject]@{
+                Name = 'Configure branches'
+                Action = {
+                    $currentBranchMappings = @($wizardState.BranchStates | ForEach-Object {
+                        [pscustomobject]@{
+                            BranchName                  = [string]$_.BranchName
+                            DevEnvironmentConfiguration = $_.DevEnvironmentConfiguration
+                            ExistingDevEnvironment      = $_.ExistingDevEnvironment
+                            Environments                = @($_.DeploymentEnvironments)
+                        }
+                    })
+
+                    $selectedBranchMappings = @(Invoke-WithErrorHandling -OperationName 'Selecting deployment branches' -ScriptBlock {
+                        Select-BranchEnvironmentMappings `
+                            -InitialBranchMappings $currentBranchMappings `
+                            -Title 'Manage deployment branches' `
+                            -GuidanceLines @(
+                                'Start by choosing the Git branches that should receive ALM4Dataverse workflow setup.',
+                                'You can add long-lived release branches as well as mainline branches, and you can come back later to change the list.'
+                            ) `
+                            -DocRelativePath 'docs/setup/github-setup.md' `
+                            -Ref $ALM4DataverseRef `
+                            -EditDevEnvironmentScriptBlock {
+                                param($allMappings, $mappingToEdit)
+
+                                $branchName = [string]$mappingToEdit.BranchName
+                                $existingDevEnvironment = $mappingToEdit.ExistingDevEnvironment
+                                $currentDevConfiguration = $mappingToEdit.DevEnvironmentConfiguration
+
+                                if ($UseGitHubEnvironments) {
+                                    Write-Host "Preparing GitHub environment 'Dev-$branchName' for the DEV Dataverse environment." -ForegroundColor Green
+                                }
+                                else {
+                                    Write-Host "Preparing prefixed repo-level credentials for DEV environment 'Dev-$branchName'." -ForegroundColor Green
+                                }
+                                Write-Host ''
+
+                                $existingDevEnvironmentSummary = if ($currentDevConfiguration) {
+                                    Get-GitHubExistingEnvironmentSelectionSummary -ExistingEnvironment $currentDevConfiguration
+                                }
+                                else {
+                                    Get-GitHubExistingEnvironmentSelectionSummary -ExistingEnvironment $existingDevEnvironment
+                                }
+
+                                $preferredDevEnvironmentUrl = if ($currentDevConfiguration) {
+                                    $currentDevConfiguration.Url
+                                }
+                                elseif ($existingDevEnvironment) {
+                                    $existingDevEnvironment.Url
+                                }
+                                else {
+                                    $null
+                                }
+
+                                $hasExistingDevConfiguration = ($currentDevConfiguration -or $existingDevEnvironment)
+                                if ($hasExistingDevConfiguration) {
+                                    $shouldConfigureDevEnvironment = Read-YesNo -Prompt "Configure a DEV Dataverse environment for branch '$branchName'?"
+                                }
+                                else {
+                                    $shouldConfigureDevEnvironment = Read-YesNo -Prompt "Configure a DEV Dataverse environment for branch '$branchName'?" -DefaultNo
+                                }
+
+                                if (-not $shouldConfigureDevEnvironment) {
+                                    return $null
+                                }
+
+                                $devEnvSelection = Select-DataverseEnvironment -Prompt "Select the DEV Dataverse environment for branch '$branchName'" -PreferredUrl $preferredDevEnvironmentUrl -PreferredSelectionSummary $existingDevEnvironmentSummary
+                                if (-not $devEnvSelection) {
+                                    return $currentDevConfiguration
+                                }
+
+                                $devEnvUrl = ConvertTo-NormalizedEnvironmentUrl -Url $devEnvSelection.Endpoints['WebApplication']
+                                $devEnvFriendlyName = $devEnvSelection.FriendlyName
+                                $reuseExistingDevEnvironmentConfiguration = (
+                                    ($devEnvSelection.PSObject.Properties.Name -contains 'UseExistingConfiguration' -and $devEnvSelection.UseExistingConfiguration) -or
+                                    (
+                                        -not [string]::IsNullOrWhiteSpace($preferredDevEnvironmentUrl) -and
+                                        $devEnvUrl -ieq (ConvertTo-NormalizedEnvironmentUrl -Url $preferredDevEnvironmentUrl)
+                                    )
+                                )
+
+                                $existingDevCredential = $null
+                                $existingDevServiceAccount = $null
+                                if ($reuseExistingDevEnvironmentConfiguration -and $existingDevEnvironment) {
+                                    $existingDevCredential = $existingDevEnvironment.Credentials
+                                    $existingDevServiceAccount = $existingDevEnvironment.ServiceAccountUPN
+                                }
+                                elseif ($currentDevConfiguration) {
+                                    $existingDevCredential = $currentDevConfiguration.Credentials
+                                    $existingDevServiceAccount = $currentDevConfiguration.ServiceAccountUPN
+                                }
+
+                                $canReuseExistingDevConfiguration = (
+                                    $reuseExistingDevEnvironmentConfiguration -and
+                                    $existingDevEnvironment -and
+                                    $existingDevEnvironment.Credentials -and
+                                    -not [string]::IsNullOrWhiteSpace($existingDevEnvironment.ServiceAccountUPN)
+                                )
+
+                                if ($canReuseExistingDevConfiguration) {
+                                    $updatedDevConfiguration = [pscustomobject]@{
+                                        ShortName         = "Dev-$branchName"
+                                        FriendlyName      = $(if ([string]::IsNullOrWhiteSpace($devEnvFriendlyName)) { "Dev-$branchName" } else { $devEnvFriendlyName })
+                                        Url               = $devEnvUrl
+                                        Credentials       = $existingDevEnvironment.Credentials
+                                        ServiceAccountUPN = $existingDevEnvironment.ServiceAccountUPN
+                                    }
+                                }
+                                else {
+                                    $updatedDevConfiguration = Get-GitHubEnvironmentConfiguration `
+                                        -EnvironmentName "Dev-$branchName" `
+                                        -EnvironmentUrl $devEnvUrl `
+                                        -FriendlyName $devEnvFriendlyName `
+                                        -ExistingCredentials $cachedCredentials `
+                                        -ExistingServiceAccounts $cachedServiceAccounts `
+                                        -TenantId $TenantId `
+                                        -RepoName $RepoName `
+                                        -ExistingCredential $existingDevCredential `
+                                        -ExistingServiceAccountUPN $existingDevServiceAccount
+                                }
+
+                                if ($updatedDevConfiguration -and -not ($cachedCredentials | Where-Object { $_.ApplicationId -eq $updatedDevConfiguration.Credentials.ApplicationId -and $_.TenantId -eq $updatedDevConfiguration.Credentials.TenantId })) {
+                                    $cachedCredentials += $updatedDevConfiguration.Credentials
+                                }
+                                if ($updatedDevConfiguration -and $cachedServiceAccounts -notcontains $updatedDevConfiguration.ServiceAccountUPN) {
+                                    $cachedServiceAccounts += $updatedDevConfiguration.ServiceAccountUPN
+                                }
+
+                                return $updatedDevConfiguration
+                            } `
+                            -EditDeploymentEnvironmentsScriptBlock {
+                                param($allMappings, $mappingToEdit)
+
+                                $branchName = [string]$mappingToEdit.BranchName
+                                $excludedDevUrl = if ($mappingToEdit.DevEnvironmentConfiguration) { $mappingToEdit.DevEnvironmentConfiguration.Url } else { $null }
+                                $selectedDeploymentEnvironments = @(Select-ConfiguredDeploymentEnvironments `
+                                    -InitialEnvironments @($mappingToEdit.Environments) `
+                                    -Heading "Target deployment environments for branch '$branchName'" `
+                                    -Title "Manage deployment environments for branch '$branchName'" `
+                                    -GuidanceLines @(
+                                        "Select the Dataverse targets branch '$branchName' should promote through.",
+                                        'Order defines promotion flow: first environment is the first stage, and each later stage depends on the previous one.'
+                                    ) `
+                                    -DocRelativePath 'docs/setup/github-setup.md' `
+                                    -Ref $ALM4DataverseRef `
+                                    -AddEnvironmentScriptBlock {
+                                        param($currentSelections)
+
+                                        $selectedEnv = Select-DataverseEnvironment -Prompt "Select a Dataverse environment for branch '$branchName'" -ExcludeUrl $excludedDevUrl
+                                        if (-not $selectedEnv) {
+                                            return $null
+                                        }
+
+                                        $url = ConvertTo-NormalizedEnvironmentUrl -Url $selectedEnv.Endpoints['WebApplication']
+                                        if ($currentSelections | Where-Object { $_.Url -ieq $url }) {
+                                            Write-Host 'An environment with that URL is already selected for this branch.' -ForegroundColor Red
+                                            return $null
+                                        }
+
+                                        Write-Host 'Use a short deployment environment name (for example: TEST, UAT, PROD).' -ForegroundColor DarkGray
+                                        $shortName = Read-TextWithDefault -Prompt 'Enter a short name for this environment' -DefaultValue ''
+                                        if ($currentSelections | Where-Object { $_.ShortName -ieq $shortName }) {
+                                            Write-Host 'An environment with that short name is already selected for this branch.' -ForegroundColor Red
+                                            return $null
+                                        }
+
+                                        $environmentConfiguration = Get-GitHubEnvironmentConfiguration `
+                                            -EnvironmentName $shortName `
+                                            -EnvironmentUrl $url `
+                                            -FriendlyName $selectedEnv.FriendlyName `
+                                            -ExistingCredentials $cachedCredentials `
+                                            -ExistingServiceAccounts $cachedServiceAccounts `
+                                            -TenantId $TenantId `
+                                            -RepoName $RepoName
+
+                                        if (-not ($cachedCredentials | Where-Object { $_.ApplicationId -eq $environmentConfiguration.Credentials.ApplicationId -and $_.TenantId -eq $environmentConfiguration.Credentials.TenantId })) {
+                                            $cachedCredentials += $environmentConfiguration.Credentials
+                                        }
+                                        if ($cachedServiceAccounts -notcontains $environmentConfiguration.ServiceAccountUPN) {
+                                            $cachedServiceAccounts += $environmentConfiguration.ServiceAccountUPN
+                                        }
+
+                                        return [pscustomobject]@{
+                                            ShortName            = $environmentConfiguration.ShortName
+                                            FriendlyName         = $environmentConfiguration.FriendlyName
+                                            Url                  = $environmentConfiguration.Url
+                                            Credentials          = $environmentConfiguration.Credentials
+                                            ServiceAccountUPN    = $environmentConfiguration.ServiceAccountUPN
+                                            ConfigurationPending = $false
+                                        }
+                                    } `
+                                    -EditEnvironmentScriptBlock {
+                                        param($currentSelections, $environmentToEdit, $environmentIndex)
+
+                                        $otherSelections = @()
+                                        for ($selectionIndex = 0; $selectionIndex -lt $currentSelections.Count; $selectionIndex++) {
+                                            if ($selectionIndex -ne $environmentIndex) {
+                                                $otherSelections += $currentSelections[$selectionIndex]
+                                            }
+                                        }
+
+                                        $currentUrl = ConvertTo-NormalizedEnvironmentUrl -Url $environmentToEdit.Url
+                                        $selectedEnv = Select-DataverseEnvironment -Prompt "Select the Dataverse environment for '$($environmentToEdit.ShortName)' in branch '$branchName'" -ExcludeUrl $excludedDevUrl -PreferredUrl $currentUrl
+                                        if (-not $selectedEnv) {
+                                            return $null
+                                        }
+
+                                        $url = ConvertTo-NormalizedEnvironmentUrl -Url $selectedEnv.Endpoints['WebApplication']
+                                        if ($otherSelections | Where-Object { $_.Url -ieq $url }) {
+                                            Write-Host 'An environment with that URL is already selected for this branch.' -ForegroundColor Red
+                                            return $null
+                                        }
+
+                                        Write-Host 'Use a short deployment environment name (for example: TEST, UAT, PROD).' -ForegroundColor DarkGray
+                                        $shortName = Read-TextWithDefault -Prompt 'Enter a short name for this environment' -DefaultValue $environmentToEdit.ShortName
+                                        if ($otherSelections | Where-Object { $_.ShortName -ieq $shortName }) {
+                                            Write-Host 'An environment with that short name is already selected for this branch.' -ForegroundColor Red
+                                            return $null
+                                        }
+
+                                        $currentCredentials = @($cachedCredentials)
+                                        $currentCredentials += @($otherSelections | ForEach-Object { $_.Credentials } | Where-Object { $null -ne $_ })
+                                        $currentServiceAccounts = @($cachedServiceAccounts)
+                                        $currentServiceAccounts += @($otherSelections | ForEach-Object { $_.ServiceAccountUPN } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+
+                                        $environmentConfiguration = Get-GitHubEnvironmentConfiguration `
+                                            -EnvironmentName $shortName `
+                                            -EnvironmentUrl $url `
+                                            -FriendlyName $selectedEnv.FriendlyName `
+                                            -ExistingCredentials $currentCredentials `
+                                            -ExistingServiceAccounts $currentServiceAccounts `
+                                            -TenantId $TenantId `
+                                            -RepoName $RepoName `
+                                            -ExistingCredential $environmentToEdit.Credentials `
+                                            -ExistingServiceAccountUPN $environmentToEdit.ServiceAccountUPN
+
+                                        if (-not ($cachedCredentials | Where-Object { $_.ApplicationId -eq $environmentConfiguration.Credentials.ApplicationId -and $_.TenantId -eq $environmentConfiguration.Credentials.TenantId })) {
+                                            $cachedCredentials += $environmentConfiguration.Credentials
+                                        }
+                                        if ($cachedServiceAccounts -notcontains $environmentConfiguration.ServiceAccountUPN) {
+                                            $cachedServiceAccounts += $environmentConfiguration.ServiceAccountUPN
+                                        }
+
+                                        return [pscustomobject]@{
+                                            ShortName            = $environmentConfiguration.ShortName
+                                            FriendlyName         = $environmentConfiguration.FriendlyName
+                                            Url                  = $environmentConfiguration.Url
+                                            Credentials          = $environmentConfiguration.Credentials
+                                            ServiceAccountUPN    = $environmentConfiguration.ServiceAccountUPN
+                                            ConfigurationPending = $false
+                                        }
+                                    })
+
+                                return @($selectedDeploymentEnvironments)
+                            }
+                    })
+
+                    $existingStateByBranch = @{}
+                    foreach ($branchState in @($wizardState.BranchStates)) {
+                        $existingStateByBranch[$branchState.BranchName.ToLowerInvariant()] = $branchState
+                    }
+
+                    $updatedBranchStates = @()
+                    foreach ($selectedBranchMapping in $selectedBranchMappings) {
+                        $branchName = [string]$selectedBranchMapping.BranchName
+                        $branchKey = $branchName.ToLowerInvariant()
+                        if ($existingStateByBranch.ContainsKey($branchKey)) {
+                            $existingBranchState = $existingStateByBranch[$branchKey]
+                            $existingBranchState.DevEnvironmentConfiguration = $selectedBranchMapping.DevEnvironmentConfiguration
+                            $existingBranchState.DeploymentEnvironments = @($selectedBranchMapping.Environments)
+                            $updatedBranchStates += $existingBranchState
+                            continue
+                        }
+
+                        $existingDevEnvironment = if ($branchName -ieq $DefaultBranch) {
+                            $ExistingSetupState.DevEnvironment
+                        }
+                        else {
+                            Get-GitHubExistingEnvironmentState -Owner $RepoOwner -Repo $RepoName -EnvironmentName "Dev-$branchName" -TenantId $TenantId
+                        }
+
+                        $newBranchState = New-GitHubBranchSetupState -BranchName $branchName -ExistingDevEnvironment $existingDevEnvironment -DeploymentEnvironments @()
+                        $newBranchState.DevEnvironmentConfiguration = $selectedBranchMapping.DevEnvironmentConfiguration
+                        $newBranchState.DeploymentEnvironments = @($selectedBranchMapping.Environments)
+                        $updatedBranchStates += $newBranchState
+                    }
+
+                    foreach ($branchState in @($updatedBranchStates)) {
+                        $branchState.PublishPlan = Get-BranchTargetedRepoChangePublishPlan `
+                            -ProviderName 'GitHub' `
+                            -RepositoryName $RepoFullName `
+                            -TargetBranch $branchState.BranchName `
+                            -DefaultCommitMessage "Add ALM4Dataverse GitHub Actions workflows for branch '$($branchState.BranchName)'" `
+                            -DefaultPullRequestTitle "Add ALM4Dataverse GitHub Actions workflows for branch '$($branchState.BranchName)'" `
+                            -DefaultPullRequestDescription "This pull request adds or updates the ALM4Dataverse GitHub Actions workflow and repository configuration for branch '$($branchState.BranchName)'." `
+                            -GuidanceLines @(
+                                "Choose how the generated files for branch '$($branchState.BranchName)' should be published.",
+                                'Use pull-request mode when reviews or branch protection must happen before the branch becomes active.'
+                            ) `
+                            -DocRelativePath 'docs/setup/github-setup.md' `
+                            -Ref $ALM4DataverseRef
+                    }
+
+                    $wizardState.BranchStates = @($updatedBranchStates | Sort-Object BranchName)
+
+                    $branchMappingsForValidation = @($wizardState.BranchStates | ForEach-Object {
+                        [pscustomobject]@{
+                            BranchName   = [string]$_.BranchName
+                            Environments = @($_.DeploymentEnvironments)
+                        }
+                    })
+                    if (Test-BranchEnvironmentMappingsHaveDuplicates -BranchMappings $branchMappingsForValidation) {
+                        throw 'Each deployment environment can only be assigned to one branch. Resolve duplicate environment assignments before continuing.'
+                    }
+
+                    $branchesWithNoEnvironments = @($selectedBranchMappings | Where-Object {
+                        ($null -eq $_.DevEnvironmentConfiguration) -and (@($_.Environments).Count -eq 0)
+                    } | ForEach-Object { $_.BranchName })
+                    if ($branchesWithNoEnvironments.Count -gt 0) {
+                        $branchList = ($branchesWithNoEnvironments -join ', ')
+                        throw "Each configured branch must have at least one mapped environment (DEV or deployment). Remove unused branches or configure environments for: $branchList"
+                    }
+
+                    $wizardState.BranchStates = @($selectedBranchMappings | ForEach-Object {
+                        $mappedBranch = $_
+                        $existingBranchState = $updatedBranchStates | Where-Object { $_.BranchName -ieq $mappedBranch.BranchName } | Select-Object -First 1
+                        if (-not $existingBranchState) {
+                            $existingBranchState = New-GitHubBranchSetupState -BranchName ([string]$mappedBranch.BranchName) -ExistingDevEnvironment $null -DeploymentEnvironments @()
+                        }
+
+                        $existingBranchState.DevEnvironmentConfiguration = $mappedBranch.DevEnvironmentConfiguration
+                        $existingBranchState.DeploymentEnvironments = @($mappedBranch.Environments)
+                        $existingBranchState
+                    })
+
+                    $wizardState.BranchEnvironmentMappingCompleted = $true
+                }
+            },
+            [pscustomobject]@{
+                Name = 'Configure DEV environments'
+                Action = {
+                    if ($wizardState.BranchEnvironmentMappingCompleted) {
+                        [Spectre.Console.AnsiConsole]::MarkupLine('[grey]DEV environments were already configured while defining branches.[/]')
+                        return
+                    }
+
+                    foreach ($branchState in @($wizardState.BranchStates)) {
+                        $branchName = [string]$branchState.BranchName
+                        Write-Section `
+                            -Message "Configure DEV environment for branch '$branchName'"
+
+                        if ($UseGitHubEnvironments) {
+                            Write-Host "Preparing GitHub environment 'Dev-$branchName' for the DEV Dataverse environment." -ForegroundColor Green
+                        }
+                        else {
+                            Write-Host "Preparing prefixed repo-level credentials for DEV environment 'Dev-$branchName'." -ForegroundColor Green
+                        }
+                        Write-Host ''
+
+                        $existingDevEnvironment = $branchState.ExistingDevEnvironment
+                        $currentDevConfiguration = $branchState.DevEnvironmentConfiguration
+                        $existingDevEnvironmentSummary = if ($currentDevConfiguration) {
+                            Get-GitHubExistingEnvironmentSelectionSummary -ExistingEnvironment $currentDevConfiguration
+                        }
+                        else {
+                            Get-GitHubExistingEnvironmentSelectionSummary -ExistingEnvironment $existingDevEnvironment
+                        }
+
+                        $preferredDevEnvironmentUrl = if ($currentDevConfiguration) {
+                            $currentDevConfiguration.Url
+                        }
+                        elseif ($existingDevEnvironment) {
+                            $existingDevEnvironment.Url
+                        }
+                        else {
+                            $null
+                        }
+
+                        $hasExistingDevConfiguration = ($currentDevConfiguration -or $existingDevEnvironment)
+                        if ($hasExistingDevConfiguration) {
+                            $shouldConfigureDevEnvironment = Read-YesNo -Prompt "Configure a DEV Dataverse environment for branch '$branchName'?"
+                        }
+                        else {
+                            $shouldConfigureDevEnvironment = Read-YesNo -Prompt "Configure a DEV Dataverse environment for branch '$branchName'?" -DefaultNo
+                        }
+
+                        if (-not $shouldConfigureDevEnvironment) {
+                            $branchState.DevEnvironmentConfiguration = $null
+                            continue
+                        }
+
+                        $devEnvSelection = Select-DataverseEnvironment -Prompt "Select the DEV Dataverse environment for branch '$branchName'" -PreferredUrl $preferredDevEnvironmentUrl -PreferredSelectionSummary $existingDevEnvironmentSummary
+                        if (-not $devEnvSelection) {
+                            $branchState.DevEnvironmentConfiguration = $null
+                            continue
+                        }
+
+                        $devEnvUrl = ConvertTo-NormalizedEnvironmentUrl -Url $devEnvSelection.Endpoints['WebApplication']
+                        $devEnvFriendlyName = $devEnvSelection.FriendlyName
+                        $reuseExistingDevEnvironmentConfiguration = (
+                            ($devEnvSelection.PSObject.Properties.Name -contains 'UseExistingConfiguration' -and $devEnvSelection.UseExistingConfiguration) -or
+                            (
+                                -not [string]::IsNullOrWhiteSpace($preferredDevEnvironmentUrl) -and
+                                $devEnvUrl -ieq (ConvertTo-NormalizedEnvironmentUrl -Url $preferredDevEnvironmentUrl)
+                            )
+                        )
+
+                        $existingDevCredential = $null
+                        $existingDevServiceAccount = $null
+                        if ($reuseExistingDevEnvironmentConfiguration -and $existingDevEnvironment) {
+                            $existingDevCredential = $existingDevEnvironment.Credentials
+                            $existingDevServiceAccount = $existingDevEnvironment.ServiceAccountUPN
+                        }
+                        elseif ($currentDevConfiguration) {
+                            $existingDevCredential = $currentDevConfiguration.Credentials
+                            $existingDevServiceAccount = $currentDevConfiguration.ServiceAccountUPN
+                        }
+
+                        $canReuseExistingDevConfiguration = (
+                            $reuseExistingDevEnvironmentConfiguration -and
+                            $existingDevEnvironment -and
+                            $existingDevEnvironment.Credentials -and
+                            -not [string]::IsNullOrWhiteSpace($existingDevEnvironment.ServiceAccountUPN)
+                        )
+
+                        if ($canReuseExistingDevConfiguration) {
+                            $branchState.DevEnvironmentConfiguration = [pscustomobject]@{
+                                ShortName         = "Dev-$branchName"
+                                FriendlyName      = $(if ([string]::IsNullOrWhiteSpace($devEnvFriendlyName)) { "Dev-$branchName" } else { $devEnvFriendlyName })
+                                Url               = $devEnvUrl
+                                Credentials       = $existingDevEnvironment.Credentials
+                                ServiceAccountUPN = $existingDevEnvironment.ServiceAccountUPN
+                            }
+                        }
+                        else {
+                            $branchState.DevEnvironmentConfiguration = Get-GitHubEnvironmentConfiguration `
+                                -EnvironmentName "Dev-$branchName" `
+                                -EnvironmentUrl $devEnvUrl `
+                                -FriendlyName $devEnvFriendlyName `
+                                -ExistingCredentials $cachedCredentials `
+                                -ExistingServiceAccounts $cachedServiceAccounts `
+                                -TenantId $TenantId `
+                                -RepoName $RepoName `
+                                -ExistingCredential $existingDevCredential `
+                                -ExistingServiceAccountUPN $existingDevServiceAccount
+                        }
+
+                        if ($branchState.DevEnvironmentConfiguration -and -not ($cachedCredentials | Where-Object { $_.ApplicationId -eq $branchState.DevEnvironmentConfiguration.Credentials.ApplicationId -and $_.TenantId -eq $branchState.DevEnvironmentConfiguration.Credentials.TenantId })) {
+                            $cachedCredentials += $branchState.DevEnvironmentConfiguration.Credentials
+                        }
+                        if ($branchState.DevEnvironmentConfiguration -and $cachedServiceAccounts -notcontains $branchState.DevEnvironmentConfiguration.ServiceAccountUPN) {
+                            $cachedServiceAccounts += $branchState.DevEnvironmentConfiguration.ServiceAccountUPN
+                        }
+                    }
+                }
+            },
+            [pscustomobject]@{
+                Name = 'Configure deployment environments'
+                Action = {
+                    if ($wizardState.BranchEnvironmentMappingCompleted) {
+                        [Spectre.Console.AnsiConsole]::MarkupLine('[grey]Deployment environments were already configured while defining branches.[/]')
+                        return
+                    }
+
+                    foreach ($branchState in @($wizardState.BranchStates)) {
+                        $branchName = [string]$branchState.BranchName
+                        Write-Section `
+                            -Message "Configure deployment environments for branch '$branchName'"
+
+                        $excludedDevUrl = if ($branchState.DevEnvironmentConfiguration) { $branchState.DevEnvironmentConfiguration.Url } else { $null }
+                        $initialDeploymentEnvironments = @()
+                        foreach ($existingDeploymentEnvironment in @($branchState.DeploymentEnvironments)) {
+                            if ([string]::IsNullOrWhiteSpace($existingDeploymentEnvironment.ShortName)) {
+                                continue
+                            }
+
+                            $existingEnvironmentUrl = ConvertTo-NormalizedEnvironmentUrl -Url $existingDeploymentEnvironment.Url
+                            if ($existingEnvironmentUrl -and -not [string]::IsNullOrWhiteSpace($excludedDevUrl) -and $existingEnvironmentUrl -ieq $excludedDevUrl) {
+                                Write-Warning "Skipping existing deployment stage '$($existingDeploymentEnvironment.ShortName)' for branch '$branchName' because it points at that branch's DEV environment URL."
+                                continue
+                            }
+
+                            $initialDeploymentEnvironments += [pscustomobject]@{
+                                ShortName            = $existingDeploymentEnvironment.ShortName
+                                FriendlyName         = $existingDeploymentEnvironment.FriendlyName
+                                Url                  = $existingEnvironmentUrl
+                                Credentials          = $existingDeploymentEnvironment.Credentials
+                                ServiceAccountUPN    = $existingDeploymentEnvironment.ServiceAccountUPN
+                                ConfigurationPending = (($null -eq $existingDeploymentEnvironment.Credentials) -or [string]::IsNullOrWhiteSpace($existingDeploymentEnvironment.ServiceAccountUPN))
+                            }
+                        }
+
+                        $selectedDeploymentEnvironments = @(Select-ConfiguredDeploymentEnvironments `
+                            -InitialEnvironments $initialDeploymentEnvironments `
+                            -Heading "Target deployment environments for branch '$branchName'" `
+                            -Title "Manage deployment environments for branch '$branchName'" `
+                            -GuidanceLines @(
+                                "Add each target Dataverse environment that branch '$branchName' should deploy to.",
+                                'Keep the environments in promotion order because the generated DEPLOY workflow stages follow that sequence.'
+                            ) `
+                            -DocRelativePath 'docs/setup/github-setup.md' `
+                            -Ref $ALM4DataverseRef `
+                            -AddEnvironmentScriptBlock {
+                                param($currentSelections)
+
+                                $selectedEnv = Select-DataverseEnvironment -Prompt "Select a Dataverse environment for branch '$branchName'" -ExcludeUrl $excludedDevUrl
+                                if (-not $selectedEnv) {
+                                    return $null
+                                }
+
+                                $url = ConvertTo-NormalizedEnvironmentUrl -Url $selectedEnv.Endpoints['WebApplication']
+                                if ($currentSelections | Where-Object { $_.Url -ieq $url }) {
+                                    Write-Host 'An environment with that URL is already selected for this branch.' -ForegroundColor Red
+                                    return $null
+                                }
+
+                                Write-Host 'Use a short deployment environment name (for example: TEST, UAT, PROD).' -ForegroundColor DarkGray
+                                $shortName = Read-TextWithDefault -Prompt 'Enter a short name for this environment' -DefaultValue ''
+                                if ($currentSelections | Where-Object { $_.ShortName -ieq $shortName }) {
+                                    Write-Host 'An environment with that short name is already selected for this branch.' -ForegroundColor Red
+                                    return $null
+                                }
+
+                                $environmentConfiguration = Get-GitHubEnvironmentConfiguration `
+                                    -EnvironmentName $shortName `
+                                    -EnvironmentUrl $url `
+                                    -FriendlyName $selectedEnv.FriendlyName `
+                                    -ExistingCredentials $cachedCredentials `
+                                    -ExistingServiceAccounts $cachedServiceAccounts `
+                                    -TenantId $TenantId `
+                                    -RepoName $RepoName
+
+                                if (-not ($cachedCredentials | Where-Object { $_.ApplicationId -eq $environmentConfiguration.Credentials.ApplicationId -and $_.TenantId -eq $environmentConfiguration.Credentials.TenantId })) {
+                                    $cachedCredentials += $environmentConfiguration.Credentials
+                                }
+                                if ($cachedServiceAccounts -notcontains $environmentConfiguration.ServiceAccountUPN) {
+                                    $cachedServiceAccounts += $environmentConfiguration.ServiceAccountUPN
+                                }
+
+                                return [pscustomobject]@{
+                                    ShortName            = $environmentConfiguration.ShortName
+                                    FriendlyName         = $environmentConfiguration.FriendlyName
+                                    Url                  = $environmentConfiguration.Url
+                                    Credentials          = $environmentConfiguration.Credentials
+                                    ServiceAccountUPN    = $environmentConfiguration.ServiceAccountUPN
+                                    ConfigurationPending = $false
+                                }
+                            } `
+                            -EditEnvironmentScriptBlock {
+                                param($currentSelections, $environmentToEdit, $environmentIndex)
+
+                                $otherSelections = @()
+                                for ($selectionIndex = 0; $selectionIndex -lt $currentSelections.Count; $selectionIndex++) {
+                                    if ($selectionIndex -ne $environmentIndex) {
+                                        $otherSelections += $currentSelections[$selectionIndex]
+                                    }
+                                }
+
+                                $currentUrl = ConvertTo-NormalizedEnvironmentUrl -Url $environmentToEdit.Url
+                                $selectedEnv = Select-DataverseEnvironment -Prompt "Select the Dataverse environment for '$($environmentToEdit.ShortName)' in branch '$branchName'" -ExcludeUrl $excludedDevUrl -PreferredUrl $currentUrl
+                                if (-not $selectedEnv) {
+                                    return $null
+                                }
+
+                                $url = ConvertTo-NormalizedEnvironmentUrl -Url $selectedEnv.Endpoints['WebApplication']
+                                if ($otherSelections | Where-Object { $_.Url -ieq $url }) {
+                                    Write-Host 'An environment with that URL is already selected for this branch.' -ForegroundColor Red
+                                    return $null
+                                }
+
+                                Write-Host 'Use a short deployment environment name (for example: TEST, UAT, PROD).' -ForegroundColor DarkGray
+                                $shortName = Read-TextWithDefault -Prompt 'Enter a short name for this environment' -DefaultValue $environmentToEdit.ShortName
+                                if ($otherSelections | Where-Object { $_.ShortName -ieq $shortName }) {
+                                    Write-Host 'An environment with that short name is already selected for this branch.' -ForegroundColor Red
+                                    return $null
+                                }
+
+                                $currentCredentials = @($cachedCredentials)
+                                $currentCredentials += @($otherSelections | ForEach-Object { $_.Credentials } | Where-Object { $null -ne $_ })
+                                $currentServiceAccounts = @($cachedServiceAccounts)
+                                $currentServiceAccounts += @($otherSelections | ForEach-Object { $_.ServiceAccountUPN } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+
+                                $environmentConfiguration = Get-GitHubEnvironmentConfiguration `
+                                    -EnvironmentName $shortName `
+                                    -EnvironmentUrl $url `
+                                    -FriendlyName $selectedEnv.FriendlyName `
+                                    -ExistingCredentials $currentCredentials `
+                                    -ExistingServiceAccounts $currentServiceAccounts `
+                                    -TenantId $TenantId `
+                                    -RepoName $RepoName `
+                                    -ExistingCredential $environmentToEdit.Credentials `
+                                    -ExistingServiceAccountUPN $environmentToEdit.ServiceAccountUPN
+
+                                if (-not ($cachedCredentials | Where-Object { $_.ApplicationId -eq $environmentConfiguration.Credentials.ApplicationId -and $_.TenantId -eq $environmentConfiguration.Credentials.TenantId })) {
+                                    $cachedCredentials += $environmentConfiguration.Credentials
+                                }
+                                if ($cachedServiceAccounts -notcontains $environmentConfiguration.ServiceAccountUPN) {
+                                    $cachedServiceAccounts += $environmentConfiguration.ServiceAccountUPN
+                                }
+
+                                return [pscustomobject]@{
+                                    ShortName            = $environmentConfiguration.ShortName
+                                    FriendlyName         = $environmentConfiguration.FriendlyName
+                                    Url                  = $environmentConfiguration.Url
+                                    Credentials          = $environmentConfiguration.Credentials
+                                    ServiceAccountUPN    = $environmentConfiguration.ServiceAccountUPN
+                                    ConfigurationPending = $false
+                                }
+                            })
+
+                        $resolvedDeploymentEnvironments = @()
+                        foreach ($selectedDeploymentEnvironment in @($selectedDeploymentEnvironments)) {
+                            if ([string]::IsNullOrWhiteSpace($selectedDeploymentEnvironment.ShortName)) {
+                                continue
+                            }
+
+                            $resolvedEnvironmentUrl = ConvertTo-NormalizedEnvironmentUrl -Url $selectedDeploymentEnvironment.Url
+                            $resolvedFriendlyName = if ([string]::IsNullOrWhiteSpace($selectedDeploymentEnvironment.FriendlyName)) { $selectedDeploymentEnvironment.ShortName } else { $selectedDeploymentEnvironment.FriendlyName }
+
+                            if ([string]::IsNullOrWhiteSpace($resolvedEnvironmentUrl)) {
+                                $resolvedEnvironment = Select-DataverseEnvironment -Prompt "Resolve the Dataverse environment for existing deployment stage '$($selectedDeploymentEnvironment.ShortName)' in branch '$branchName'" -ExcludeUrl $excludedDevUrl -PreferredUrl $selectedDeploymentEnvironment.Url
+                                if (-not $resolvedEnvironment) {
+                                    throw "No Dataverse environment selected for existing deployment stage '$($selectedDeploymentEnvironment.ShortName)' in branch '$branchName'."
+                                }
+
+                                $resolvedEnvironmentUrl = ConvertTo-NormalizedEnvironmentUrl -Url $resolvedEnvironment.Endpoints['WebApplication']
+                                $resolvedFriendlyName = $resolvedEnvironment.FriendlyName
+                            }
+
+                            if ($resolvedEnvironmentUrl -and -not [string]::IsNullOrWhiteSpace($excludedDevUrl) -and $resolvedEnvironmentUrl -ieq $excludedDevUrl) {
+                                Write-Warning "Skipping deployment environment '$($selectedDeploymentEnvironment.ShortName)' for branch '$branchName' because it points at that branch's DEV environment URL."
+                                continue
+                            }
+
+                            $needsConfiguration = (
+                                ($selectedDeploymentEnvironment.PSObject.Properties.Name -contains 'ConfigurationPending' -and $selectedDeploymentEnvironment.ConfigurationPending) -or
+                                ($null -eq $selectedDeploymentEnvironment.Credentials) -or
+                                [string]::IsNullOrWhiteSpace($selectedDeploymentEnvironment.ServiceAccountUPN)
+                            )
+
+                            if ($needsConfiguration) {
+                                $completedEnvironment = Get-GitHubEnvironmentConfiguration `
+                                    -EnvironmentName $selectedDeploymentEnvironment.ShortName `
+                                    -EnvironmentUrl $resolvedEnvironmentUrl `
+                                    -FriendlyName $resolvedFriendlyName `
+                                    -ExistingCredentials $cachedCredentials `
+                                    -ExistingServiceAccounts $cachedServiceAccounts `
+                                    -TenantId $TenantId `
+                                    -RepoName $RepoName `
+                                    -ExistingCredential $selectedDeploymentEnvironment.Credentials `
+                                    -ExistingServiceAccountUPN $selectedDeploymentEnvironment.ServiceAccountUPN
+                            }
+                            else {
+                                $completedEnvironment = [pscustomobject]@{
+                                    ShortName         = $selectedDeploymentEnvironment.ShortName
+                                    FriendlyName      = $resolvedFriendlyName
+                                    Url               = $resolvedEnvironmentUrl
+                                    Credentials       = $selectedDeploymentEnvironment.Credentials
+                                    ServiceAccountUPN = $selectedDeploymentEnvironment.ServiceAccountUPN
+                                }
+                            }
+
+                            $resolvedDeploymentEnvironments += $completedEnvironment
+                            if ($completedEnvironment.Credentials -and -not ($cachedCredentials | Where-Object { $_.ApplicationId -eq $completedEnvironment.Credentials.ApplicationId -and $_.TenantId -eq $completedEnvironment.Credentials.TenantId })) {
+                                $cachedCredentials += $completedEnvironment.Credentials
+                            }
+                            if (-not [string]::IsNullOrWhiteSpace($completedEnvironment.ServiceAccountUPN) -and $cachedServiceAccounts -notcontains $completedEnvironment.ServiceAccountUPN) {
+                                $cachedServiceAccounts += $completedEnvironment.ServiceAccountUPN
+                            }
+                        }
+
+                        $branchState.DeploymentEnvironments = @($resolvedDeploymentEnvironments)
+                    }
+
+                    $branchMappingsForValidation = @($wizardState.BranchStates | ForEach-Object {
+                        [pscustomobject]@{
+                            BranchName   = [string]$_.BranchName
+                            Environments = @($_.DeploymentEnvironments)
+                        }
+                    })
+                    if (Test-BranchEnvironmentMappingsHaveDuplicates -BranchMappings $branchMappingsForValidation) {
+                        throw 'Each deployment environment can only be assigned to one branch. Resolve duplicate environment assignments before continuing.'
+                    }
+
+                    $branchesWithNoEnvironments = @($wizardState.BranchStates | Where-Object {
+                        ($null -eq $_.DevEnvironmentConfiguration) -and (@($_.DeploymentEnvironments).Count -eq 0)
+                    } | ForEach-Object { $_.BranchName })
+                    if ($branchesWithNoEnvironments.Count -gt 0) {
+                        $branchList = ($branchesWithNoEnvironments -join ', ')
+                        throw "Each configured branch must have at least one mapped environment (DEV or deployment). Remove unused branches or configure environments for: $branchList"
+                    }
+                }
+            },
+            [pscustomobject]@{
+                Name = 'Configure solutions'
+                Action = {
+                    Write-Section `
+                        -Message 'Configure Solutions (alm-config.psd1)'
+
+                    $candidateBranches = @($wizardState.BranchStates | Where-Object { $_.DevEnvironmentConfiguration })
+                    if ($candidateBranches.Count -eq 0) {
+                        [Spectre.Console.AnsiConsole]::MarkupLine('[yellow]No branch currently has a DEV environment configured, so solution selection will be skipped for now.[/]')
+                        $wizardState.SolutionResult = $null
+                        $wizardState.SolutionSourceBranch = $null
+                        return
+                    }
+
+                    if ($candidateBranches.Count -eq 1) {
+                        $sourceBranchState = $candidateBranches[0]
+                    }
+                    else {
+                        $branchMenuItems = @($candidateBranches | ForEach-Object {
+                            $friendlyName = if ($_.DevEnvironmentConfiguration -and -not [string]::IsNullOrWhiteSpace($_.DevEnvironmentConfiguration.FriendlyName)) {
+                                [string]$_.DevEnvironmentConfiguration.FriendlyName
+                            }
+                            else {
+                                [string]$_.BranchName
+                            }
+                            "Use branch '$($_.BranchName)' ($friendlyName) for solution discovery"
+                        })
+                        $branchSelection = Select-FromMenu -Title 'Select which configured branch should provide the DEV environment for solution discovery' -Items $branchMenuItems -PromptGuidanceLines @(
+                            'Choose the branch whose DEV environment should be used for solution discovery.',
+                            'Use the branch that currently reflects your source-controlled customization baseline.'
+                        ) -PromptGuidanceDocRelativePath 'docs/config/alm-config.md' -PromptGuidanceRef $ALM4DataverseRef
+                        if ($null -eq $branchSelection) {
+                            throw 'No solution source branch selected.'
+                        }
+
+                        $sourceBranchState = $candidateBranches[$branchSelection]
+                    }
+
+                    $wizardState.SolutionSourceBranch = $sourceBranchState.BranchName
+                    $existingConfigPath = Join-Path $CloneRoot 'alm-config.psd1'
+                    $wizardState.SolutionResult = Invoke-WithErrorHandling -OperationName 'Selecting solutions' -ScriptBlock {
+                        Get-DataverseSolutionsSelection `
+                            -ExistingConfigPath $existingConfigPath `
+                            -ExistingEnvironmentUrl $sourceBranchState.DevEnvironmentConfiguration.Url `
+                            -ExistingEnvironmentConfiguration $sourceBranchState.DevEnvironmentConfiguration
+                    }
+                }
+            },
+            [pscustomobject]@{
+                Name = 'Review choices'
+                Action = {
+                    Write-Section `
+                        -Message 'Review setup choices'
+
+                    $allConfiguredEnvironments = @()
+                    foreach ($branchState in @($wizardState.BranchStates)) {
+                        if ($branchState.DevEnvironmentConfiguration) {
+                            $allConfiguredEnvironments += $branchState.DevEnvironmentConfiguration
+                        }
+                        $allConfiguredEnvironments += @($branchState.DeploymentEnvironments)
+                    }
+
+                    $branchMappingsForReview = @($wizardState.BranchStates | ForEach-Object {
+                        [pscustomobject]@{
+                            BranchName   = [string]$_.BranchName
+                            Environments = @($_.DeploymentEnvironments)
+                        }
+                    })
+
+                    Show-KeyValueSummaryTable -Heading 'Setup review' -Values ([ordered]@{
+                        'Repository'               = $RepoFullName
+                        'Shared workflow source'   = $SharedWorkflowRepository
+                        'Shared workflow ref'      = $SharedWorkflowReference
+                        'Credential storage'       = $(if ($UseGitHubEnvironments) { 'GitHub environments' } else { 'Prefixed repository variables/secrets' })
+                        'Promotion mode'           = $DeploymentPromotionMode
+                        'Configured branches'      = [string]$wizardState.BranchStates.Count
+                        'Solution source branch'   = $(if ([string]::IsNullOrWhiteSpace($wizardState.SolutionSourceBranch)) { '<none>' } else { $wizardState.SolutionSourceBranch })
+                        'Solutions selected'       = [string]$(if ($wizardState.SolutionResult) { @($wizardState.SolutionResult.Solutions).Count } else { 0 })
+                    })
+
+                    Show-BranchEnvironmentMappingTable -BranchMappings $branchMappingsForReview
+                    [Spectre.Console.AnsiConsole]::WriteLine()
+
+                    foreach ($branchState in @($wizardState.BranchStates)) {
+                        $publishSummary = if ($branchState.PublishPlan -and $branchState.PublishPlan.Mode -eq 'PullRequest') {
+                            "Pull request into $($branchState.PublishPlan.TargetBranch) from $($branchState.PublishPlan.BranchName)"
+                        }
+                        elseif ($branchState.PublishPlan) {
+                            "Direct commit to $($branchState.PublishPlan.BranchName)"
+                        }
+                        else {
+                            '<not configured>'
+                        }
+
+                        Show-KeyValueSummaryTable -Heading "Branch '$($branchState.BranchName)'" -Values ([ordered]@{
+                            'Publish mode'            = $publishSummary
+                            'DEV environment'         = $(if ($branchState.DevEnvironmentConfiguration) { $branchState.DevEnvironmentConfiguration.ShortName } else { '<none>' })
+                            'Deployment environments' = [string]@($branchState.DeploymentEnvironments).Count
+                        })
+                    }
+
+                    if ($allConfiguredEnvironments.Count -gt 0) {
+                        Show-EnvironmentConfigurationTable -EnvironmentConfigurations $allConfiguredEnvironments
+                    }
+
+                    Confirm-SetupReviewAction
+                }
+            }
+        )
+
+        $selectedBranchNames = @($wizardState.BranchStates | ForEach-Object { [string]$_.BranchName })
+        $existingConfiguredBranchNames = @($ExistingSetupState.DeploymentBranchMappings | ForEach-Object {
+            if ($null -eq $_) {
+                return $null
+            }
+
+            if ($_.PSObject.Properties.Name -contains 'BranchName') {
+                return [string]$_.BranchName
+            }
+
+            return $null
+        } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+
+        $removedBranchNames = @($existingConfiguredBranchNames | Where-Object { $_ -notin $selectedBranchNames -and $_ -ne $DefaultBranch })
+
+        $publishBranchStates = @($wizardState.BranchStates)
+        $defaultBranchState = $publishBranchStates | Where-Object { $_.BranchName -ieq $DefaultBranch } | Select-Object -First 1
+        if (-not $defaultBranchState) {
+            $defaultBranchState = New-GitHubBranchSetupState -BranchName $DefaultBranch -ExistingDevEnvironment $ExistingSetupState.DevEnvironment -DeploymentEnvironments @()
+            $defaultBranchState.PublishPlan = Get-BranchTargetedRepoChangePublishPlan `
+                -ProviderName 'GitHub' `
+                -RepositoryName $RepoFullName `
+                -TargetBranch $DefaultBranch `
+                -DefaultCommitMessage "Sync ALM4Dataverse workflow availability updates on '$DefaultBranch'" `
+                -DefaultPullRequestTitle "Sync ALM4Dataverse workflow availability updates on '$DefaultBranch'" `
+                -DefaultPullRequestDescription "This pull request ensures ALM4Dataverse workflow availability updates are present on '$DefaultBranch', including deploy workflow definitions for configured branches." `
+                -GuidanceLines @(
+                    "GitHub requires workflows to be present on '$DefaultBranch' for availability.",
+                    'Choose how to publish these default-branch workflow availability updates.'
+                ) `
+                -DocRelativePath 'docs/setup/github-setup.md' `
+                -Ref $ALM4DataverseRef
+
+            $publishBranchStates += $defaultBranchState
+        }
+
+        foreach ($removedBranchName in @($removedBranchNames)) {
+            $removedBranchState = New-GitHubBranchSetupState -BranchName $removedBranchName -ExistingDevEnvironment $null -DeploymentEnvironments @()
+            $removedBranchState.PublishPlan = Get-BranchTargetedRepoChangePublishPlan `
+                -ProviderName 'GitHub' `
+                -RepositoryName $RepoFullName `
+                -TargetBranch $removedBranchName `
+                -DefaultCommitMessage "Sync non-deploy ALM4Dataverse workflow updates for branch '$removedBranchName'" `
+                -DefaultPullRequestTitle "Sync non-deploy ALM4Dataverse workflow updates for branch '$removedBranchName'" `
+                -DefaultPullRequestDescription "This pull request updates non-deploy ALM4Dataverse workflow files on '$removedBranchName' so shared workflow changes stay aligned across long-lived branches." `
+                -GuidanceLines @(
+                    "Branch '$removedBranchName' is no longer mapped for deployment, but shared non-deploy workflow updates still need to be merged.",
+                    'Choose how to publish these synchronization updates.'
+                ) `
+                -DocRelativePath 'docs/setup/github-setup.md' `
+                -Ref $ALM4DataverseRef
+
+            $publishBranchStates += $removedBranchState
+        }
+
+        $defaultBranchDeployWorkflowDefinitions = @()
+        foreach ($configuredBranchState in @($wizardState.BranchStates)) {
+            $defaultBranchDeployWorkflowDefinitions += [pscustomobject]@{
+                BranchName             = [string]$configuredBranchState.BranchName
+                DeploymentEnvironments = @($configuredBranchState.DeploymentEnvironments)
+            }
+        }
+        foreach ($removedBranchName in @($removedBranchNames)) {
+            $defaultBranchDeployWorkflowDefinitions += [pscustomobject]@{
+                BranchName             = [string]$removedBranchName
+                DeploymentEnvironments = @()
+            }
+        }
+
+        foreach ($branchState in @($publishBranchStates)) {
+            $isSelectedBranch = ($selectedBranchNames -contains [string]$branchState.BranchName)
+            $isRemovedBranch = ($removedBranchNames -contains [string]$branchState.BranchName)
+            $isDefaultPublishBranch = ([string]$branchState.BranchName -ieq $DefaultBranch)
+
+            $solutionsForBranchPublish = if ($isSelectedBranch) {
+                $(if ($wizardState.SolutionResult) { @($wizardState.SolutionResult.Solutions) } else { @() })
+            }
+            else {
+                @()
+            }
+
+            $deployDefinitionsForBranchPublish = if ($isDefaultPublishBranch) {
+                @($defaultBranchDeployWorkflowDefinitions)
+            }
+            else {
+                @()
+            }
+
+            $publishResult = Invoke-WithErrorHandling -OperationName "Publishing repository changes for branch '$($branchState.BranchName)'" -StatusMessage "Publishing repository changes for branch '$($branchState.BranchName)'..." -CaptureOutputInPanel -ScriptBlock {
+                Publish-GitHubBranchSetupChanges `
+                    -RepoRoot $CloneRoot `
+                    -ConfiguredBranch $branchState.BranchName `
+                    -PublishPlan $branchState.PublishPlan `
+                    -DefaultBranch $DefaultBranch `
+                    -CopyRoot $copyRoot `
+                    -SharedWorkflowRepository $SharedWorkflowRepository `
+                    -SharedWorkflowReference $SharedWorkflowReference `
+                    -PromotionMode $DeploymentPromotionMode `
+                        -Solutions $solutionsForBranchPublish `
+                        -DeploymentEnvironments @($branchState.DeploymentEnvironments) `
+                        -DeployWorkflowBranchDefinitions $deployDefinitionsForBranchPublish `
+                        -SkipDeployWorkflow:$isRemovedBranch
+            }
+
+            $publishResults += [pscustomobject]@{
+                ConfiguredBranch = $branchState.BranchName
+                BranchName       = $publishResult.BranchName
+                TargetBranch     = $publishResult.TargetBranch
+                PullRequestUrl   = $publishResult.PullRequestUrl
+                Mode             = $publishResult.Mode
+                HasChanges       = $publishResult.HasChanges
+            }
+        }
+
+        return [pscustomobject]@{
+            BranchStates         = @($wizardState.BranchStates)
+            SolutionResult       = $wizardState.SolutionResult
+            SolutionSourceBranch = $wizardState.SolutionSourceBranch
+            PublishResults       = @($publishResults)
+        }
+    }
+    finally {
+        if ($upstreamClone -and (Test-Path -LiteralPath $upstreamClone)) {
+            try { Remove-Item -LiteralPath $upstreamClone -Recurse -Force -ErrorAction SilentlyContinue } catch { }
+        }
     }
 }
 
@@ -2644,8 +4309,8 @@ function Publish-GitHubRepoChanges {
 #  MAIN SETUP FLOW
 # ─────────────────────────────────────────────────────────────
 
-Set-SetupPhaseContext -PhaseNames $script:setupPhaseNames -CurrentPhaseIndex 0
-Write-Section "Authenticating with GitHub"
+Write-Section `
+    -Message "Authenticating with GitHub"
 
 $ghStatusProbe = Invoke-WithSpectreStatus -Status 'Checking GitHub CLI authentication status...' -ScriptBlock {
     $output = @(& gh auth status --hostname github.com 2>&1)
@@ -2669,7 +4334,15 @@ if ($hasExistingGitHubLogin) {
     }
     $ghMenuItems += "Sign in with a different GitHub account"
 
-    $ghChoice = Select-FromMenu -Title "GitHub authentication" -Items $ghMenuItems
+    $ghChoice = Select-FromMenu `
+        -Title "GitHub authentication" `
+        -Items $ghMenuItems `
+        -PromptGuidanceLines @(
+            'Choose whether to continue with the currently authenticated GitHub account or switch to another one.',
+            'Use the account that should own or manage workflow and repository settings for this setup.'
+        ) `
+        -PromptGuidanceDocRelativePath 'docs/setup/github-setup.md' `
+        -PromptGuidanceRef $ALM4DataverseRef
     if ($null -eq $ghChoice) {
         throw "No GitHub authentication option selected."
     }
@@ -2711,7 +4384,8 @@ if ($script:ghUserId) {
     Write-Host "GitHub user id: $script:ghUserId" -ForegroundColor DarkGray
 }
 
-Write-Section "Authenticating with Azure"
+Write-Section `
+    -Message "Authenticating with Azure"
 
 Write-Host "To enable automated setup, we need to authenticate with Azure." -ForegroundColor Green
 Write-Host ""
@@ -2728,7 +4402,15 @@ if ($cachedAzureAccounts.Count -gt 0) {
     $azureAuthMenuItems = @($cachedAzureAccounts | ForEach-Object { "Use existing Azure login: $_" })
     $azureAuthMenuItems += "Sign in with a different Azure account"
 
-    $azureAuthChoice = Select-FromMenu -Title "Azure authentication" -Items $azureAuthMenuItems
+    $azureAuthChoice = Select-FromMenu `
+        -Title "Azure authentication" `
+        -Items $azureAuthMenuItems `
+        -PromptGuidanceLines @(
+            'Choose whether to reuse an existing Azure login context or sign in with a different identity.',
+            'Select an identity that can manage app registrations and Dataverse users in the target tenant.'
+        ) `
+        -PromptGuidanceDocRelativePath 'docs/setup/github-setup.md' `
+        -PromptGuidanceRef $ALM4DataverseRef
     if ($null -eq $azureAuthChoice) {
         throw "No Azure authentication option selected."
     }
@@ -2765,8 +4447,8 @@ if ([string]::IsNullOrWhiteSpace($TenantId)) {
 Assert-ValidTenantIdentifier -TenantIdentifier $TenantId -Source 'Resolved Azure tenant ID'
 
 # ─────────────────────────────────────────────────────────────
-Set-SetupPhaseContext -PhaseNames $script:setupPhaseNames -CurrentPhaseIndex 1
-Write-Section "Ensuring Shared Workflow Repository"
+Write-Section `
+    -Message "Ensuring Shared Workflow Repository"
 
 $upstreamWorkflowRepoFullName = Resolve-GitHubRepoFullNameFromSource -Source $upstreamRepo -Fallback 'ALM4Dataverse/ALM4Dataverse'
 $upstreamGitSource = Resolve-UpstreamGitRemoteSource -ConfiguredSource $upstreamRepo -GitHubFullName $upstreamWorkflowRepoFullName
@@ -2775,7 +4457,8 @@ Write-Host "Upstream workflow source: $upstreamWorkflowRepoFullName" -Foreground
 Write-Host "Using ALM4Dataverse ref: $ALM4DataverseRef" -ForegroundColor DarkGray
 
 # ─────────────────────────────────────────────────────────────
-Write-Section "Select GitHub Repository"
+Write-Section `
+    -Message "Select GitHub Repository"
 
 $repos = @(Invoke-WithSpectreStatus -Status 'Fetching repositories you have write access to...' -ScriptBlock {
     Get-GitHubRepoList
@@ -2786,15 +4469,20 @@ $repos = @($repos | Sort-Object -Property nameWithOwner)
 $repoMenuItems = @()
 $repoMenuActions = @()
 
+
+$repoMenuItems += 'Create a new repository'
+$repoMenuActions += @{ Type = 'CreateNew' }
+
 foreach ($repo in $repos) {
     $repoMenuItems += "Use existing repository: $($repo.nameWithOwner)"
     $repoMenuActions += @{ Type = 'UseExisting'; Repo = $repo }
 }
 
-$repoMenuItems += 'Create a new repository'
-$repoMenuActions += @{ Type = 'CreateNew' }
 
-$repoSelection = Select-FromMenu -Title "Select the repository to set up ALM4Dataverse in" -Items $repoMenuItems
+$repoSelection = Select-FromMenu -Title "Select the repository to set up ALM4Dataverse in" -Items $repoMenuItems -PromptGuidanceLines @(
+    'Choose the target repository for ALM4Dataverse shared workflows.',
+    'This must be a separate repository from your main application repository.'
+) -PromptGuidanceDocRelativePath 'docs/setup/github-setup.md' -PromptGuidanceRef $ALM4DataverseRef
 if ($null -eq $repoSelection) {
     throw "No repository selected."
 }
@@ -2822,29 +4510,87 @@ if ($selectedRepo.defaultBranchRef -and $selectedRepo.defaultBranchRef.name) {
 }
 Write-Host "Default branch: $defaultBranch"
 
-$cloneRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("ALM4Dataverse-GH-" + [guid]::NewGuid().ToString('n'))
-New-DirectoryIfMissing -Path $cloneRoot
+$cloneRoot = $null
 
-Write-Section "Cloning Repository"
+Write-Section `
+    -Message "Cloning Repository"
 
-Invoke-WithErrorHandling -OperationName "Cloning repository" -ScriptBlock {
-    Write-Host "Cloning $repoFullName to $cloneRoot..." -ForegroundColor Yellow
-    & gh repo clone $repoFullName $cloneRoot -- --depth 1 2>&1
-    if ($LASTEXITCODE -ne 0) { throw "gh repo clone failed." }
-} -StatusMessage 'Cloning the selected repository...' -CaptureOutputInPanel | Out-Null
+    $cloneRoot = Invoke-WithErrorHandling -OperationName "Cloning repository" -ScriptBlock {
+    $attemptCloneRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("ALM4Dataverse-GH-" + [guid]::NewGuid().ToString('n'))
+    Write-Host "Cloning $repoFullName to $attemptCloneRoot..." -ForegroundColor Yellow
 
-Push-Location $cloneRoot
-try {
-    & git checkout $defaultBranch 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        & git checkout -b $defaultBranch 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to check out repository base branch '$defaultBranch'."
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $cloneOutput = @(& gh repo clone $repoFullName $attemptCloneRoot -- --depth 1 2>&1)
+        $cloneExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    if ($cloneExitCode -ne 0) {
+        $cloneErrorDetails = @($cloneOutput | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $cloneErrorMessage = if ($cloneErrorDetails.Count -gt 0) { $cloneErrorDetails[-1] } else { "Exit code: $cloneExitCode" }
+        throw "gh repo clone failed. $cloneErrorMessage"
+    }
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $fetchOutput = @(& git -C $attemptCloneRoot fetch origin '+refs/heads/*:refs/remotes/origin/*' --prune 2>&1)
+        $fetchExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    if ($fetchExitCode -ne 0) {
+        $fetchErrorDetails = @($fetchOutput | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $fetchErrorMessage = if ($fetchErrorDetails.Count -gt 0) { $fetchErrorDetails[-1] } else { "Exit code: $fetchExitCode" }
+        throw "git fetch failed while retrieving remote branches. $fetchErrorMessage"
+    }
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        [void](& git -C $attemptCloneRoot reset --hard HEAD 2>&1)
+        [void](& git -C $attemptCloneRoot clean -fd 2>&1)
+
+        $checkoutOutput = @(& git -C $attemptCloneRoot checkout -f $defaultBranch 2>&1)
+        $checkoutExitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
+
+    if ($checkoutExitCode -ne 0) {
+        $previousErrorActionPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            $checkoutOutput = @(& git -C $attemptCloneRoot checkout -B $defaultBranch "origin/$defaultBranch" 2>&1)
+            $checkoutExitCode = $LASTEXITCODE
+        }
+        finally {
+            $ErrorActionPreference = $previousErrorActionPreference
         }
     }
-}
-finally {
-    Pop-Location
+
+    if ($checkoutExitCode -ne 0) {
+        $checkoutErrorDetails = @($checkoutOutput | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+        $checkoutErrorMessage = if ($checkoutErrorDetails.Count -gt 0) { $checkoutErrorDetails[-1] } else { "Exit code: $checkoutExitCode" }
+        throw "Failed to check out repository base branch '$defaultBranch'. $checkoutErrorMessage"
+    }
+
+    return [pscustomobject]@{
+        CloneRoot = $attemptCloneRoot
+    }
+} -StatusMessage 'Cloning the selected repository...' -CaptureOutputInPanel
+
+$cloneRoot = if ($cloneRoot -and $cloneRoot.PSObject.Properties.Name -contains 'CloneRoot') { [string]$cloneRoot.CloneRoot } else { [string]$cloneRoot }
+
+if ([string]::IsNullOrWhiteSpace($cloneRoot)) {
+    throw 'Clone operation did not produce a working directory path.'
 }
 
 $existingSetupState = Invoke-WithSpectreStatus -Status 'Inspecting the existing repository configuration...' -ScriptBlock {
@@ -2895,7 +4641,8 @@ if ($existingSetupState.SharedWorkflowReference) {
 }
 
 # ─────────────────────────────────────────────────────────────
-Write-Section "Ensuring Shared Workflow Repository"
+Write-Section `
+    -Message "Ensuring Shared Workflow Repository"
 
 $sharedWorkflowRepo = Invoke-WithErrorHandling -OperationName "Ensuring shared workflow repository" -ScriptBlock {
     Ensure-GitHubForkForSharedWorkflows `
@@ -2972,524 +4719,77 @@ if (-not [string]::IsNullOrWhiteSpace($environmentCapabilities.Message)) {
 
 Write-Host "DEPLOY workflow promotion mode: $deploymentPromotionMode" -ForegroundColor DarkGray
 
-$deploymentModeGuidance = @()
-if ($useGitHubEnvironments) {
-    $deploymentModeGuidance += "Setup will store credentials in GitHub environments for each selected Dataverse environment."
-    if ($enableEnvironmentApprovals) {
-        $deploymentModeGuidance += "Required reviewers are available, so DEPLOY stages can auto-chain using environment approvals."
+$githubSetupResult = Invoke-GitHubBranchAwareSetup `
+    -CloneRoot $cloneRoot `
+    -RepoOwner $repoOwner `
+    -RepoName $repoName `
+    -RepoFullName $repoFullName `
+    -DefaultBranch $defaultBranch `
+    -TenantId $TenantId `
+    -ExistingSetupState $existingSetupState `
+    -SharedWorkflowRepository $sharedWorkflowRepository `
+    -SharedWorkflowReference $sharedWorkflowReference `
+    -UpstreamGitSource $upstreamGitSource `
+    -ALM4DataverseRef $ALM4DataverseRef `
+    -UseGitHubEnvironments $useGitHubEnvironments `
+    -EnableEnvironmentApprovals $enableEnvironmentApprovals `
+    -EnvironmentApprovalReviewerIds $environmentApprovalReviewerIds `
+    -DeploymentPromotionMode $deploymentPromotionMode
+
+$branchStates = @($githubSetupResult.BranchStates)
+$solutionResult = $githubSetupResult.SolutionResult
+$solutionSourceBranch = $githubSetupResult.SolutionSourceBranch
+$repoPublishResults = @($githubSetupResult.PublishResults)
+$allConfiguredEnvironments = @()
+$allDeploymentEnvironments = @()
+foreach ($branchState in @($branchStates)) {
+    if ($branchState.DevEnvironmentConfiguration) {
+        $allConfiguredEnvironments += $branchState.DevEnvironmentConfiguration
     }
-    else {
-        $deploymentModeGuidance += "Required reviewers are unavailable, so DEPLOY will use manual-gate-tag promotion even though environment-scoped credentials are available."
-    }
-}
-else {
-    $deploymentModeGuidance += "Setup will fall back to prefixed repository-level credentials because GitHub environments are unavailable for this repository."
-    $deploymentModeGuidance += "That keeps the workflows usable on lower GitHub plans, but promotion remains manual with gate tags."
-}
-Write-SetupGuidance -Lines $deploymentModeGuidance -DocRelativePath 'docs/setup/github-setup.md' -Ref $ALM4DataverseRef
 
-$script:cachedCredentials = @()
-$script:cachedServiceAccounts = @()
-
-$repoPublishPlan = Get-RepoChangePublishPlan `
-    -ProviderName 'GitHub' `
-    -RepositoryName $repoFullName `
-    -BaseBranch $defaultBranch `
-    -DefaultCommitMessage 'Add ALM4Dataverse GitHub Actions workflows' `
-    -DefaultPullRequestTitle 'Add ALM4Dataverse GitHub Actions workflows' `
-    -DefaultPullRequestDescription "This pull request adds or updates the ALM4Dataverse GitHub Actions workflows and repository configuration generated by setup-github.ps1." `
-    -GuidanceLines @(
-        'If branch protection or required reviews apply, choose the pull-request path so the generated workflow and config changes can be reviewed before they become active.',
-        'If you commit directly, the selected branch is updated immediately and the workflows on that branch can be used as soon as the push completes.'
-    ) `
-    -DocRelativePath 'docs/setup/github-setup.md' `
-    -Ref $ALM4DataverseRef
-
-$wizardState = [pscustomobject]@{
-    DeploymentEnvironments                  = @()
-    SolutionResult                          = $null
-    DevEnvUrl                               = $null
-    DevEnvFriendlyName                      = $null
-    ReuseExistingDevEnvironmentConfiguration = $false
-    DevEnvironmentConfiguration             = $null
+    $allDeploymentEnvironments += @($branchState.DeploymentEnvironments)
+    $allConfiguredEnvironments += @($branchState.DeploymentEnvironments)
 }
-$devEnvShortName = "Dev-$defaultBranch"
-$repoPublishResult = $null
+
+try { Remove-Item -LiteralPath $cloneRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
 
 # ─────────────────────────────────────────────────────────────
-Push-Location $cloneRoot
-try {
-    # Ensure we are on the right branch
-    & git checkout $defaultBranch 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        & git checkout -b $defaultBranch 2>&1 | Out-Null
-    }
+Write-Section `
+    -Message "Configure Dev Environment Credentials"
 
-    if ($repoPublishPlan.BranchName -ne $defaultBranch) {
-        if ($repoPublishPlan.Mode -eq 'PullRequest') {
-            & git ls-remote --exit-code --heads origin $defaultBranch 2>&1 | Out-Null
-            $targetBranchExistsOnOrigin = ($LASTEXITCODE -eq 0)
-
-            if (-not $targetBranchExistsOnOrigin) {
-                Write-Host "Initializing base branch '$defaultBranch' on origin for pull request mode..." -ForegroundColor Yellow
-
-                & git config user.name 'ALM4Dataverse Setup' 2>$null
-                & git config user.email 'setup@alm4dataverse.local' 2>$null
-
-                & git rev-parse --verify HEAD 2>&1 | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    & git commit --allow-empty -m 'Initialize repository base branch for ALM4Dataverse setup' 2>&1 | Out-Null
-                    if ($LASTEXITCODE -ne 0) {
-                        throw "Failed to create initial commit for base branch '$defaultBranch'."
-                    }
-                }
-
-                & git push -u origin $defaultBranch 2>&1 | Out-Null
-                if ($LASTEXITCODE -ne 0) {
-                    throw "Failed to push base branch '$defaultBranch' to origin."
-                }
-            }
-        }
-
-        & git checkout -B $repoPublishPlan.BranchName 2>&1 | Out-Null
-        if ($LASTEXITCODE -ne 0) {
-            throw "Failed to create or switch to working branch '$($repoPublishPlan.BranchName)'."
-        }
-    }
-
-    # ─────────────────────────────────────────────────────────
-    Set-SetupPhaseContext -PhaseNames $script:setupPhaseNames -CurrentPhaseIndex 2
-    Write-Section "Copy Workflow Templates"
-
-    $copyRoot = $null
-    if ($PSScriptRoot) {
-        $copyRoot = Join-Path $PSScriptRoot 'copy-to-your-repo'
-    }
-
-    if (-not $copyRoot -or -not (Test-Path $copyRoot)) {
-        # Fetch templates from upstream
-        Write-Host "Fetching workflow templates from ALM4Dataverse release..." -ForegroundColor Yellow
-        $upstreamClone = Join-Path ([System.IO.Path]::GetTempPath()) ("ALM4Dataverse-Templates-" + [guid]::NewGuid().ToString('n'))
-        New-DirectoryIfMissing -Path $upstreamClone
-
-        try {
-            & git clone --depth 1 --branch $ALM4DataverseRef `
-                $upstreamGitSource `
-                $upstreamClone 2>&1 | Out-Null
-            if ($LASTEXITCODE -ne 0) { throw "Failed to clone ALM4Dataverse templates." }
-            $copyRoot = Join-Path $upstreamClone 'copy-to-your-repo'
-        }
-        finally {
-            # We clean up $upstreamClone after usage
-        }
-    }
-
-    Invoke-WithErrorHandling -OperationName "Copying workflow templates" -StatusMessage 'Copying workflow templates into your repository...' -ScriptBlock {
-        Copy-WorkflowTemplatesToRepo `
-            -SourceRoot $copyRoot `
-            -TargetRoot $cloneRoot `
-            -Branch $defaultBranch `
-            -SharedWorkflowRepository $sharedWorkflowRepository `
-            -SharedWorkflowRef $sharedWorkflowReference
-    } -CaptureOutputInPanel | Out-Null
-
-    Invoke-SetupWizard -Title 'GitHub Actions ALM4Dataverse setup' -Steps @(
-        [pscustomobject]@{
-            Name = 'Configure solutions'
-            Action = {
-                Write-Section 'Configure Solutions (alm-config.psd1)'
-
-                $wizardState.SolutionResult = Invoke-WithErrorHandling -OperationName 'Selecting solutions' -ScriptBlock {
-                    $existingConfigPath = Join-Path $cloneRoot 'alm-config.psd1'
-                    Get-DataverseSolutionsSelection -ExistingConfigPath $existingConfigPath -ExistingEnvironmentUrl $existingDevEnvironmentUrl -ExistingEnvironmentConfiguration $existingDevEnvironment
-                }
-
-                $wizardState.DevEnvUrl = if ($wizardState.SolutionResult) { $wizardState.SolutionResult.EnvironmentUrl } else { $null }
-                $wizardState.DevEnvFriendlyName = if ($wizardState.SolutionResult) { $wizardState.SolutionResult.EnvironmentFriendlyName } else { $null }
-                $wizardState.ReuseExistingDevEnvironmentConfiguration = if ($wizardState.SolutionResult) { [bool]$wizardState.SolutionResult.ReuseExistingConfiguration } else { $false }
-
-                Invoke-WithErrorHandling -OperationName 'Updating alm-config.psd1' -StatusMessage 'Updating alm-config.psd1 with the selected solutions...' -ScriptBlock {
-                    Update-AlmConfigInRepoClone -Solutions @($wizardState.SolutionResult.Solutions) -RepoRoot $cloneRoot
-                } -CaptureOutputInPanel | Out-Null
-            }
-        },
-        [pscustomobject]@{
-            Name = 'Configure DEV credentials'
-            Action = {
-                Write-Section 'Configure Dev Environment Credentials'
-
-                if ($useGitHubEnvironments) {
-                    Write-Host "Preparing GitHub environment '$devEnvShortName' for the DEV Dataverse environment." -ForegroundColor Green
-                }
-                else {
-                    Write-Host "Preparing prefixed repo-level credentials for DEV environment '$devEnvShortName'." -ForegroundColor Green
-                }
-                Write-Host ''
-
-                if (-not $wizardState.DevEnvUrl) {
-                    $existingDevEnvironmentSummary = Get-GitHubExistingEnvironmentSelectionSummary -ExistingEnvironment $existingDevEnvironment
-                    $devEnvSelection = Select-DataverseEnvironment -Prompt 'Select your DEV Dataverse environment' -PreferredUrl $existingDevEnvironmentUrl -PreferredSelectionSummary $existingDevEnvironmentSummary
-                    if ($devEnvSelection) {
-                        $wizardState.DevEnvUrl = ConvertTo-NormalizedEnvironmentUrl -Url $devEnvSelection.Endpoints['WebApplication']
-                        $wizardState.DevEnvFriendlyName = $devEnvSelection.FriendlyName
-                        $wizardState.ReuseExistingDevEnvironmentConfiguration = (
-                            ($devEnvSelection.PSObject.Properties.Name -contains 'UseExistingConfiguration' -and $devEnvSelection.UseExistingConfiguration) -or
-                            (
-                                -not [string]::IsNullOrWhiteSpace($existingDevEnvironmentUrl) -and
-                                $wizardState.DevEnvUrl -ieq $existingDevEnvironmentUrl
-                            )
-                        )
-                    }
-                }
-
-                if (-not $wizardState.DevEnvUrl) {
-                    [Spectre.Console.AnsiConsole]::MarkupLine('[yellow]No DEV environment is currently selected, so there is nothing to configure for this step yet.[/]')
-                    $wizardState.DevEnvironmentConfiguration = $null
-                    return
-                }
-
-                $canReuseExistingDevConfiguration = (
-                    $wizardState.ReuseExistingDevEnvironmentConfiguration -and
-                    $existingDevEnvironment -and
-                    $existingDevEnvironmentCredentials -and
-                    -not [string]::IsNullOrWhiteSpace($existingDevEnvironmentServiceAccountUPN)
-                )
-
-                if ($canReuseExistingDevConfiguration) {
-                    Write-Host 'Using the existing DEV environment credentials and service account you selected from the menu.' -ForegroundColor Green
-                    $wizardState.DevEnvironmentConfiguration = [pscustomobject]@{
-                        ShortName         = $devEnvShortName
-                        FriendlyName      = $(if ([string]::IsNullOrWhiteSpace($wizardState.DevEnvFriendlyName)) { $devEnvShortName } else { $wizardState.DevEnvFriendlyName })
-                        Url               = (ConvertTo-NormalizedEnvironmentUrl -Url $wizardState.DevEnvUrl)
-                        Credentials       = $existingDevEnvironmentCredentials
-                        ServiceAccountUPN = $existingDevEnvironmentServiceAccountUPN
-                    }
-                }
-                else {
-                    if ($wizardState.ReuseExistingDevEnvironmentConfiguration -and -not $canReuseExistingDevConfiguration) {
-                        Write-Warning 'The existing DEV environment entry is missing either credentials or service account information, so setup needs to ask for the missing details.'
-                    }
-
-                    $wizardState.DevEnvironmentConfiguration = Invoke-WithErrorHandling -OperationName 'Selecting DEV credentials' -ScriptBlock {
-                        Get-GitHubEnvironmentConfiguration `
-                            -EnvironmentName $devEnvShortName `
-                            -EnvironmentUrl $wizardState.DevEnvUrl `
-                            -FriendlyName $wizardState.DevEnvFriendlyName `
-                            -ExistingCredentials $script:cachedCredentials `
-                            -ExistingServiceAccounts $script:cachedServiceAccounts `
-                            -TenantId $TenantId `
-                            -RepoName $repoName `
-                            -ExistingCredential $existingDevEnvironmentCredentials `
-                            -ExistingServiceAccountUPN $existingDevEnvironmentServiceAccountUPN
-                    }
-                }
-
-                if ($wizardState.DevEnvironmentConfiguration -and -not ($script:cachedCredentials | Where-Object { $_.ApplicationId -eq $wizardState.DevEnvironmentConfiguration.Credentials.ApplicationId -and $_.TenantId -eq $wizardState.DevEnvironmentConfiguration.Credentials.TenantId })) {
-                    $script:cachedCredentials += $wizardState.DevEnvironmentConfiguration.Credentials
-                }
-                if ($wizardState.DevEnvironmentConfiguration -and $script:cachedServiceAccounts -notcontains $wizardState.DevEnvironmentConfiguration.ServiceAccountUPN) {
-                    $script:cachedServiceAccounts += $wizardState.DevEnvironmentConfiguration.ServiceAccountUPN
-                }
-            }
-        },
-        [pscustomobject]@{
-            Name = 'Configure deployment workflow'
-            Action = {
-                Write-Section 'Configure Deployment Workflow'
-
-                $initialDeploymentEnvironments = @()
-                foreach ($existingDeploymentEnvironment in @($existingSetupState.DeploymentEnvironments)) {
-                    if ([string]::IsNullOrWhiteSpace($existingDeploymentEnvironment.ShortName)) {
-                        continue
-                    }
-
-                    $existingEnvironmentUrl = ConvertTo-NormalizedEnvironmentUrl -Url $existingDeploymentEnvironment.Url
-                    if ($existingEnvironmentUrl -and $existingEnvironmentUrl -ieq $wizardState.DevEnvUrl) {
-                        Write-Warning "Skipping existing deployment stage '$($existingDeploymentEnvironment.ShortName)' because it points at the selected DEV environment URL."
-                        continue
-                    }
-
-                    $initialDeploymentEnvironments += [pscustomobject]@{
-                        ShortName            = $existingDeploymentEnvironment.ShortName
-                        FriendlyName         = $existingDeploymentEnvironment.FriendlyName
-                        Url                  = $existingEnvironmentUrl
-                        Credentials          = $existingDeploymentEnvironment.Credentials
-                        ServiceAccountUPN    = $existingDeploymentEnvironment.ServiceAccountUPN
-                        ConfigurationPending = (($null -eq $existingDeploymentEnvironment.Credentials) -or [string]::IsNullOrWhiteSpace($existingDeploymentEnvironment.ServiceAccountUPN))
-                    }
-                }
-
-                $wizardState.DeploymentEnvironments = @(Invoke-WithErrorHandling -OperationName 'Selecting deployment environments' -ScriptBlock {
-                    Select-ConfiguredDeploymentEnvironments `
-                        -InitialEnvironments $initialDeploymentEnvironments `
-                        -Heading 'Target Deployment Environments' `
-                        -Title 'Manage deployment environments' `
-                        -GuidanceLines @(
-                            'Add each target Dataverse environment together with the App Registration and service account that will be used for that stage.',
-                            "The table shows the full deployment configuration before DEPLOY-$defaultBranch.yml is regenerated, so you can verify URLs, authentication choices, and service-account ownership in one place.",
-                            'Best practice: keep short names stable and list environments in promotion order (for example TEST, UAT, PROD) because that sequence becomes the deployment stage chain.'
-                        ) `
-                        -DocRelativePath 'docs/setup/github-setup.md' `
-                        -Ref $ALM4DataverseRef `
-                        -AddEnvironmentScriptBlock {
-                            param($currentSelections)
-
-                            $selectedEnv = Select-DataverseEnvironment -Prompt 'Select a Dataverse environment for deployment' -ExcludeUrl $wizardState.DevEnvUrl
-                            if (-not $selectedEnv) {
-                                return $null
-                            }
-
-                            $url = ConvertTo-NormalizedEnvironmentUrl -Url $selectedEnv.Endpoints['WebApplication']
-                            if ($currentSelections | Where-Object { $_.Url -ieq $url }) {
-                                Write-Host 'An environment with that URL is already selected.' -ForegroundColor Red
-                                return $null
-                            }
-
-                            Write-Host 'Use a short deployment environment name (for example: TEST, UAT, PROD).' -ForegroundColor DarkGray
-                            $shortName = Read-TextWithDefault -Prompt 'Enter a short name for this environment' -DefaultValue ''
-                            if ($currentSelections | Where-Object { $_.ShortName -ieq $shortName }) {
-                                Write-Host 'An environment with that short name is already selected.' -ForegroundColor Red
-                                return $null
-                            }
-
-                            $environmentConfiguration = Get-GitHubEnvironmentConfiguration `
-                                -EnvironmentName $shortName `
-                                -EnvironmentUrl $url `
-                                -FriendlyName $selectedEnv.FriendlyName `
-                                -ExistingCredentials $script:cachedCredentials `
-                                -ExistingServiceAccounts $script:cachedServiceAccounts `
-                                -TenantId $TenantId `
-                                -RepoName $repoName
-
-                            if (-not ($script:cachedCredentials | Where-Object { $_.ApplicationId -eq $environmentConfiguration.Credentials.ApplicationId -and $_.TenantId -eq $environmentConfiguration.Credentials.TenantId })) {
-                                $script:cachedCredentials += $environmentConfiguration.Credentials
-                            }
-                            if ($script:cachedServiceAccounts -notcontains $environmentConfiguration.ServiceAccountUPN) {
-                                $script:cachedServiceAccounts += $environmentConfiguration.ServiceAccountUPN
-                            }
-
-                            return [pscustomobject]@{
-                                ShortName            = $environmentConfiguration.ShortName
-                                FriendlyName         = $environmentConfiguration.FriendlyName
-                                Url                  = $environmentConfiguration.Url
-                                Credentials          = $environmentConfiguration.Credentials
-                                ServiceAccountUPN    = $environmentConfiguration.ServiceAccountUPN
-                                ConfigurationPending = $false
-                            }
-                        } `
-                        -EditEnvironmentScriptBlock {
-                            param($currentSelections, $environmentToEdit, $environmentIndex)
-
-                            $otherSelections = @()
-                            for ($selectionIndex = 0; $selectionIndex -lt $currentSelections.Count; $selectionIndex++) {
-                                if ($selectionIndex -ne $environmentIndex) {
-                                    $otherSelections += $currentSelections[$selectionIndex]
-                                }
-                            }
-
-                            $currentUrl = ConvertTo-NormalizedEnvironmentUrl -Url $environmentToEdit.Url
-                            $selectedEnv = Select-DataverseEnvironment -Prompt "Select the Dataverse environment for '$($environmentToEdit.ShortName)'" -ExcludeUrl $wizardState.DevEnvUrl -PreferredUrl $currentUrl
-                            if (-not $selectedEnv) {
-                                return $null
-                            }
-
-                            $url = ConvertTo-NormalizedEnvironmentUrl -Url $selectedEnv.Endpoints['WebApplication']
-                            if ($otherSelections | Where-Object { $_.Url -ieq $url }) {
-                                Write-Host 'An environment with that URL is already selected.' -ForegroundColor Red
-                                return $null
-                            }
-
-                            Write-Host 'Use a short deployment environment name (for example: TEST, UAT, PROD).' -ForegroundColor DarkGray
-                            $shortName = Read-TextWithDefault -Prompt 'Enter a short name for this environment' -DefaultValue $environmentToEdit.ShortName
-                            if ($otherSelections | Where-Object { $_.ShortName -ieq $shortName }) {
-                                Write-Host 'An environment with that short name is already selected.' -ForegroundColor Red
-                                return $null
-                            }
-
-                            $currentCredentials = @($script:cachedCredentials)
-                            $currentCredentials += @($otherSelections | ForEach-Object { $_.Credentials } | Where-Object { $null -ne $_ })
-                            $currentServiceAccounts = @($script:cachedServiceAccounts)
-                            $currentServiceAccounts += @($otherSelections | ForEach-Object { $_.ServiceAccountUPN } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
-
-                            $environmentConfiguration = Get-GitHubEnvironmentConfiguration `
-                                -EnvironmentName $shortName `
-                                -EnvironmentUrl $url `
-                                -FriendlyName $selectedEnv.FriendlyName `
-                                -ExistingCredentials $currentCredentials `
-                                -ExistingServiceAccounts $currentServiceAccounts `
-                                -TenantId $TenantId `
-                                -RepoName $repoName `
-                                -ExistingCredential $environmentToEdit.Credentials `
-                                -ExistingServiceAccountUPN $environmentToEdit.ServiceAccountUPN
-
-                            if (-not ($script:cachedCredentials | Where-Object { $_.ApplicationId -eq $environmentConfiguration.Credentials.ApplicationId -and $_.TenantId -eq $environmentConfiguration.Credentials.TenantId })) {
-                                $script:cachedCredentials += $environmentConfiguration.Credentials
-                            }
-                            if ($script:cachedServiceAccounts -notcontains $environmentConfiguration.ServiceAccountUPN) {
-                                $script:cachedServiceAccounts += $environmentConfiguration.ServiceAccountUPN
-                            }
-
-                            return [pscustomobject]@{
-                                ShortName            = $environmentConfiguration.ShortName
-                                FriendlyName         = $environmentConfiguration.FriendlyName
-                                Url                  = $environmentConfiguration.Url
-                                Credentials          = $environmentConfiguration.Credentials
-                                ServiceAccountUPN    = $environmentConfiguration.ServiceAccountUPN
-                                ConfigurationPending = $false
-                            }
-                        }
-                })
-
-                $resolvedDeploymentEnvironments = @()
-                foreach ($selectedDeploymentEnvironment in @($wizardState.DeploymentEnvironments)) {
-                    if ([string]::IsNullOrWhiteSpace($selectedDeploymentEnvironment.ShortName)) {
-                        continue
-                    }
-
-                    $resolvedEnvironmentUrl = ConvertTo-NormalizedEnvironmentUrl -Url $selectedDeploymentEnvironment.Url
-                    $resolvedFriendlyName = if ([string]::IsNullOrWhiteSpace($selectedDeploymentEnvironment.FriendlyName)) { $selectedDeploymentEnvironment.ShortName } else { $selectedDeploymentEnvironment.FriendlyName }
-
-                    if ([string]::IsNullOrWhiteSpace($resolvedEnvironmentUrl)) {
-                        $resolvedEnvironment = Select-DataverseEnvironment -Prompt "Resolve the Dataverse environment for existing deployment stage '$($selectedDeploymentEnvironment.ShortName)'" -ExcludeUrl $wizardState.DevEnvUrl -PreferredUrl $selectedDeploymentEnvironment.Url
-                        if (-not $resolvedEnvironment) {
-                            throw "No Dataverse environment selected for existing deployment stage '$($selectedDeploymentEnvironment.ShortName)'."
-                        }
-
-                        $resolvedEnvironmentUrl = ConvertTo-NormalizedEnvironmentUrl -Url $resolvedEnvironment.Endpoints['WebApplication']
-                        $resolvedFriendlyName = $resolvedEnvironment.FriendlyName
-                    }
-
-                    if ($resolvedEnvironmentUrl -and $resolvedEnvironmentUrl -ieq $wizardState.DevEnvUrl) {
-                        Write-Warning "Skipping deployment environment '$($selectedDeploymentEnvironment.ShortName)' because it points at the selected DEV environment URL."
-                        continue
-                    }
-
-                    $needsConfiguration = (
-                        ($selectedDeploymentEnvironment.PSObject.Properties.Name -contains 'ConfigurationPending' -and $selectedDeploymentEnvironment.ConfigurationPending) -or
-                        ($null -eq $selectedDeploymentEnvironment.Credentials) -or
-                        [string]::IsNullOrWhiteSpace($selectedDeploymentEnvironment.ServiceAccountUPN)
-                    )
-
-                    if ($needsConfiguration) {
-                        Write-Host "Completing configuration for existing deployment environment '$($selectedDeploymentEnvironment.ShortName)'..." -ForegroundColor Yellow
-                        $completedEnvironment = Get-GitHubEnvironmentConfiguration `
-                            -EnvironmentName $selectedDeploymentEnvironment.ShortName `
-                            -EnvironmentUrl $resolvedEnvironmentUrl `
-                            -FriendlyName $resolvedFriendlyName `
-                            -ExistingCredentials $script:cachedCredentials `
-                            -ExistingServiceAccounts $script:cachedServiceAccounts `
-                            -TenantId $TenantId `
-                            -RepoName $repoName `
-                            -ExistingCredential $selectedDeploymentEnvironment.Credentials `
-                            -ExistingServiceAccountUPN $selectedDeploymentEnvironment.ServiceAccountUPN
-                    }
-                    else {
-                        $completedEnvironment = [pscustomobject]@{
-                            ShortName         = $selectedDeploymentEnvironment.ShortName
-                            FriendlyName      = $resolvedFriendlyName
-                            Url               = $resolvedEnvironmentUrl
-                            Credentials       = $selectedDeploymentEnvironment.Credentials
-                            ServiceAccountUPN = $selectedDeploymentEnvironment.ServiceAccountUPN
-                        }
-                    }
-
-                    $resolvedDeploymentEnvironments += $completedEnvironment
-                    if ($completedEnvironment.Credentials -and -not ($script:cachedCredentials | Where-Object { $_.ApplicationId -eq $completedEnvironment.Credentials.ApplicationId -and $_.TenantId -eq $completedEnvironment.Credentials.TenantId })) {
-                        $script:cachedCredentials += $completedEnvironment.Credentials
-                    }
-                    if (-not [string]::IsNullOrWhiteSpace($completedEnvironment.ServiceAccountUPN) -and $script:cachedServiceAccounts -notcontains $completedEnvironment.ServiceAccountUPN) {
-                        $script:cachedServiceAccounts += $completedEnvironment.ServiceAccountUPN
-                    }
-                }
-
-                $wizardState.DeploymentEnvironments = @($resolvedDeploymentEnvironments)
-
-                Invoke-WithErrorHandling -OperationName 'Updating DEPLOY workflow' -StatusMessage 'Regenerating the DEPLOY workflow for the selected environments...' -ScriptBlock {
-                    Update-DeployWorkflowInRepoClone `
-                        -RepoRoot $cloneRoot `
-                        -Branch $defaultBranch `
-                        -DeploymentEnvironments $wizardState.DeploymentEnvironments `
-                        -SharedWorkflowRepository $sharedWorkflowRepository `
-                        -SharedWorkflowRef $sharedWorkflowReference `
-                        -PromotionMode $deploymentPromotionMode
-                } -CaptureOutputInPanel | Out-Null
-            }
-        },
-        [pscustomobject]@{
-            Name = 'Review choices'
-            Action = {
-                Write-Section 'Review setup choices'
-
-                $allConfiguredEnvironments = @()
-                if ($wizardState.DevEnvironmentConfiguration) {
-                    $allConfiguredEnvironments += $wizardState.DevEnvironmentConfiguration
-                }
-                $allConfiguredEnvironments += @($wizardState.DeploymentEnvironments)
-
-                Show-KeyValueSummaryTable -Heading 'Setup review' -Values ([ordered]@{
-                    'Repository'                = $repoFullName
-                    'Shared workflow source'    = $sharedWorkflowRepository
-                    'Shared workflow ref'       = $sharedWorkflowReference
-                    'Credential storage'        = $(if ($useGitHubEnvironments) { 'GitHub environments' } else { 'Prefixed repository variables/secrets' })
-                    'Promotion mode'            = $deploymentPromotionMode
-                    'Publish mode'              = $(if ($repoPublishPlan.Mode -eq 'PullRequest') { "Pull request into $($repoPublishPlan.TargetBranch) from $($repoPublishPlan.BranchName)" } else { "Direct commit to $($repoPublishPlan.BranchName)" })
-                    'Deployment environments'   = [string]$wizardState.DeploymentEnvironments.Count
-                })
-
-                Show-EnvironmentConfigurationTable -EnvironmentConfigurations $allConfiguredEnvironments
-                Confirm-SetupReviewAction
-            }
-        }
-    )
-
-    $solutionResult = $wizardState.SolutionResult
-    $devEnvUrl = $wizardState.DevEnvUrl
-    $devEnvFriendlyName = $wizardState.DevEnvFriendlyName
-    $reuseExistingDevEnvironmentConfiguration = $wizardState.ReuseExistingDevEnvironmentConfiguration
-    $devEnvironmentConfiguration = $wizardState.DevEnvironmentConfiguration
-    $deploymentEnvironments = @($wizardState.DeploymentEnvironments)
-
-    Set-SetupPhaseContext -PhaseNames $script:setupPhaseNames -CurrentPhaseIndex 2
-    $repoPublishResult = Invoke-WithErrorHandling -OperationName 'Publishing GitHub repository changes' -StatusMessage 'Publishing repository changes to GitHub...' -CaptureOutputInPanel -ScriptBlock {
-        Publish-GitHubRepoChanges -RepoRoot $cloneRoot -PublishPlan $repoPublishPlan
-    }
-}
-finally {
-    Pop-Location
-    try { Remove-Item -LiteralPath $cloneRoot -Recurse -Force -ErrorAction SilentlyContinue } catch { }
-}
-
-# ─────────────────────────────────────────────────────────────
-Set-SetupPhaseContext -PhaseNames $script:setupPhaseNames -CurrentPhaseIndex 3
-Write-Section "Configure Dev Environment Credentials"
-
-if ($useGitHubEnvironments) {
-    Write-Host "Setting up GitHub environment '$devEnvShortName' for the DEV Dataverse environment." -ForegroundColor Green
-}
-else {
-    Write-Host "Setting up prefixed repo-level credentials for DEV environment '$devEnvShortName'." -ForegroundColor Green
-}
-Write-Host ""
-
-if ($devEnvironmentConfiguration) {
-    Invoke-WithErrorHandling -OperationName "Setting up DEV credentials" -StatusMessage 'Applying DEV environment credentials...' -CaptureOutputInPanel -ScriptBlock {
-        Apply-GitHubEnvironmentConfiguration `
-            -EnvironmentConfiguration $devEnvironmentConfiguration `
-            -TenantId $TenantId `
-            -RepoOwner $repoOwner `
-            -RepoName $repoName `
-            -RepoFullName $repoFullName `
-            -UseGitHubEnvironments $useGitHubEnvironments `
-            -EnableApprovals:$false
-    } | Out-Null
-}
-else {
+$devBranchStates = @($branchStates | Where-Object { $_.DevEnvironmentConfiguration })
+if ($devBranchStates.Count -eq 0) {
     [Spectre.Console.AnsiConsole]::MarkupLine('[yellow]No DEV environment credentials were configured in the wizard, so this step will be skipped.[/]')
 }
+else {
+    foreach ($branchState in $devBranchStates) {
+        $devEnvironmentConfiguration = $branchState.DevEnvironmentConfiguration
+        Write-Section `
+            -Message "Apply DEV environment configuration for branch '$($branchState.BranchName)'"
+        if ($useGitHubEnvironments) {
+            Write-Host "Setting up GitHub environment '$($devEnvironmentConfiguration.ShortName)' for branch '$($branchState.BranchName)'." -ForegroundColor Green
+        }
+        else {
+            Write-Host "Setting up prefixed repo-level credentials for DEV environment '$($devEnvironmentConfiguration.ShortName)'." -ForegroundColor Green
+        }
+        Write-Host ""
+
+        Invoke-WithErrorHandling -OperationName "Setting up DEV credentials for branch '$($branchState.BranchName)'" -StatusMessage "Applying DEV environment credentials for branch '$($branchState.BranchName)'..." -CaptureOutputInPanel -ScriptBlock {
+            Apply-GitHubEnvironmentConfiguration `
+                -EnvironmentConfiguration $devEnvironmentConfiguration `
+                -TenantId $TenantId `
+                -RepoOwner $repoOwner `
+                -RepoName $repoName `
+                -RepoFullName $repoFullName `
+                -UseGitHubEnvironments $useGitHubEnvironments `
+                -EnableApprovals:$false
+        } | Out-Null
+    }
+}
 
 # ─────────────────────────────────────────────────────────────
-Set-SetupPhaseContext -PhaseNames $script:setupPhaseNames -CurrentPhaseIndex 4
-Write-Section "Configure Deployment Environment Credentials"
+Write-Section `
+    -Message "Configure Deployment Environment Credentials"
 
 if ($useGitHubEnvironments) {
     Write-Host "Configuring GitHub environment credentials for deployment stages." -ForegroundColor Green
@@ -3499,36 +4799,33 @@ else {
 }
 Write-Host ""
 
-if ($deploymentEnvironments.Count -gt 0) {
-    Write-Host "Using deployment environments selected earlier: $($deploymentEnvironments.ShortName -join ', ')" -ForegroundColor DarkGray
-}
-
-if ($deploymentEnvironments.Count -eq 0) {
+if ($allDeploymentEnvironments.Count -eq 0) {
     Write-Host "No deployment environments selected. You can run this script again to add them later." -ForegroundColor Yellow
 }
 else {
-    for ($envIndex = 0; $envIndex -lt $deploymentEnvironments.Count; $envIndex++) {
-        $env = $deploymentEnvironments[$envIndex]
-        Write-Section "Applying environment configuration: $($env.ShortName)"
-        Write-Host "Dataverse URL: $($env.Url)" -ForegroundColor DarkGray
-        Write-Host ""
+    foreach ($branchState in @($branchStates)) {
+        foreach ($env in @($branchState.DeploymentEnvironments)) {
+            Write-Section `
+                -Message "Applying environment configuration '$($env.ShortName)' for branch '$($branchState.BranchName)'"
+            Write-Host "Dataverse URL: $($env.Url)" -ForegroundColor DarkGray
+            Write-Host ""
 
-        Invoke-WithErrorHandling -OperationName "Applying environment configuration for $($env.ShortName)" -AllowSkip -ScriptBlock {
-            Apply-GitHubEnvironmentConfiguration `
-                -EnvironmentConfiguration $env `
-                -TenantId $TenantId `
-                -RepoOwner $repoOwner `
-                -RepoName $repoName `
-                -RepoFullName $repoFullName `
-                -UseGitHubEnvironments $useGitHubEnvironments `
-                -EnableApprovals:$enableEnvironmentApprovals `
-                -RequiredReviewerIds $environmentApprovalReviewerIds
-        } -StatusMessage "Applying configuration for environment '$($env.ShortName)'..." -CaptureOutputInPanel | Out-Null
+            Invoke-WithErrorHandling -OperationName "Applying environment configuration for $($env.ShortName)" -AllowSkip -ScriptBlock {
+                Apply-GitHubEnvironmentConfiguration `
+                    -EnvironmentConfiguration $env `
+                    -TenantId $TenantId `
+                    -RepoOwner $repoOwner `
+                    -RepoName $repoName `
+                    -RepoFullName $repoFullName `
+                    -UseGitHubEnvironments $useGitHubEnvironments `
+                    -EnableApprovals:$enableEnvironmentApprovals `
+                    -RequiredReviewerIds $environmentApprovalReviewerIds
+            } -StatusMessage "Applying configuration for environment '$($env.ShortName)'..." -CaptureOutputInPanel | Out-Null
+        }
     }
 }
 
 # ─────────────────────────────────────────────────────────────
-Set-SetupPhaseContext -PhaseNames $script:setupPhaseNames -CurrentPhaseIndex 4
 Show-SetupCompletionScreen `
     -Heading 'GitHub Actions setup completed successfully!' `
     -AccessLabel 'Open your GitHub Actions page' `
@@ -3536,14 +4833,16 @@ Show-SetupCompletionScreen `
     -SummaryValues ([ordered]@{
         'Repository'              = $repoFullName
         'Shared workflow source'  = $sharedWorkflowRepository
-        'Repository publish'      = $(if ($repoPublishResult -and $repoPublishResult.Mode -eq 'PullRequest' -and $repoPublishResult.HasChanges) { "Pull request created from $($repoPublishResult.BranchName) to $($repoPublishResult.TargetBranch) (merge required)" } elseif ($repoPublishResult -and $repoPublishResult.Mode -eq 'PullRequest') { "Pull request mode selected, but no repository changes were detected so no branch or pull request was created" } elseif ($repoPublishResult -and $repoPublishResult.HasChanges) { "Direct commit to '$($repoPublishResult.BranchName)'" } else { 'No repository changes were needed' })
+        'Configured branches'     = [string]$branchStates.Count
+        'Solution source branch'  = $(if ([string]::IsNullOrWhiteSpace($solutionSourceBranch)) { '<none>' } else { $solutionSourceBranch })
+        'Repository publish'      = (Get-GitHubPublishSummaryText -PublishResults $repoPublishResults)
         'Promotion mode'          = $deploymentPromotionMode
         'Credential storage'      = $(if ($useGitHubEnvironments) { 'GitHub environments' } else { 'Prefixed repository variables/secrets' })
-        'Configured environments' = [string]($deploymentEnvironments.Count + $(if ($devEnvironmentConfiguration) { 1 } else { 0 }))
+        'Configured environments' = [string]$allConfiguredEnvironments.Count
     }) `
     -NextStepLinks @(
-        $(if ($repoPublishResult -and $repoPublishResult.Mode -eq 'PullRequest' -and -not [string]::IsNullOrWhiteSpace($repoPublishResult.PullRequestUrl)) {
-            @{ Label = 'Review and merge the setup pull request (required before workflows are active)'; Url = $repoPublishResult.PullRequestUrl }
+        $(foreach ($repoPublishResult in @($repoPublishResults | Where-Object { $_.Mode -eq 'PullRequest' -and -not [string]::IsNullOrWhiteSpace($_.PullRequestUrl) })) {
+            @{ Label = "Review and merge the setup pull request for branch '$($repoPublishResult.TargetBranch)'"; Url = $repoPublishResult.PullRequestUrl }
         }),
         @{ Label = 'Run EXPORT for your DEV environment'; Url = (Get-Alm4DataverseDocUrl -RelativePath 'docs/usage/exporting-changes.md' -Ref $ALM4DataverseRef) },
         @{ Label = 'Configure EV and CR values for environments'; Url = (Get-Alm4DataverseDocUrl -RelativePath 'docs/setup/github-variables.md' -Ref $ALM4DataverseRef) },

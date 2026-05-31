@@ -158,10 +158,11 @@ To configure it, edit only:
 - each stage's `promotion-mode` value:
   - `manual-gate-tag` (GitHub Free compatible; manual deployment + gate tag)
   - `environment-approval` (auto-chain after previous stage success; relies on environment protection rules)
-- the `workflow_run` trigger **only when using** `environment-approval`
+- the `repository_dispatch` trigger **only when using** `environment-approval`
 - `workflow_dispatch.inputs.target-environment`
 - the `deploy-*` jobs (one per environment, with `needs` chaining)
 - keep the context payload lines unchanged in each stage:
+  - `trigger-branch: <workflow-branch-name>`
   - `github-context-json: ${{ toJSON(github) }}`
   - `caller-inputs-json: ${{ toJSON(inputs) }}`
 
@@ -174,13 +175,22 @@ repository capability detection:
 Behavior remains simple:
 
 - **`manual-gate-tag`**: every stage is triggered manually from **Actions** > **DEPLOY-main** > **Run workflow**; `target-environment` remains mandatory, while `build-run-name` can be supplied explicitly or left blank to use the latest successful BUILD from the selected branch.
-- **`environment-approval`**: when BUILD succeeds on `main`, stage 1 starts automatically and later stages auto-chain only after the previous stage succeeds and any environment approval rules pass. For a manual replay, `target-environment` can be left blank to start from the first configured stage, or set to a specific environment name to jump directly to that stage.
+- **`environment-approval`**: when BUILD succeeds, it sends a `repository_dispatch` event and stage 1 starts automatically for matching branch workflows; later stages auto-chain only after the previous stage succeeds and any environment approval rules pass. For a manual replay, `target-environment` can be left blank to start from the first configured stage, or set to a specific environment name to jump directly to that stage.
+
+  The dispatch event type is branch-scoped using:
+  `alm4dataverse-build-deploy-{branch-token}`
+  where `{branch-token}` is the lowercase branch name with non-alphanumeric
+  characters replaced by `-` (for example `main` → `main`,
+  `feature/my-work` → `feature-my-work`).
+
+  Each DEPLOY stage must pass the matching branch via:
+  `trigger-branch: <workflow-branch-name>`.
 
 See [Deployment Gates for GitHub Free](#deployment-gates-for-github-free).
 
 If your default branch is not `main`:
 - Rename `DEPLOY-main.yml` to `DEPLOY-{branchname}.yml`
-- Update the `branches:` filter in the `workflow_run` trigger (if present)
+- Ensure your BUILD dispatch payload branch value matches the DEPLOY workflow branch name.
 
 ### Workflow job timeouts
 
@@ -566,12 +576,22 @@ On a **private repository with GitHub Free**:
 ### Write access for EXPORT and DEPLOY tags
 
 The EXPORT workflow commits and pushes solution changes back to the repository.
-The DEPLOY workflows push git tag gates and environment pointer tags after
-successful deployments.
+After a successful export commit, it uses the GitHub CLI/API to dispatch `BUILD.yml`
+on the same branch. The DEPLOY workflows push git tag gates and environment pointer
+tags after successful deployments.
 
 1. Go to **Settings** > **Actions** > **General**
 2. Under **Workflow permissions**, select **Read and write permissions**
 3. Click **Save**
+
+### Repository dispatch token for EXPORT → BUILD
+
+`EXPORT` triggers `BUILD` by sending a `repository_dispatch` event via the GitHub
+CLI/API. By default it uses the workflow `GITHUB_TOKEN`.
+
+If your repository policy requires a separate token, add a repository-level or
+environment-level secret named `WORKFLOW_DISPATCH_TOKEN` (or legacy alias
+`GH_WORKFLOW_TOKEN`).
 
 Alternatively, each reusable workflow declares `permissions: contents: write` which
 overrides the default on a per-job basis.
@@ -592,6 +612,8 @@ Once configured:
 - **EXPORT** — go to **Actions** > **EXPORT** > **Run workflow**, enter a commit message, and click **Run workflow**.
 - **IMPORT** — go to **Actions** > **IMPORT** > **Run workflow** and click **Run workflow**.
 - **DEPLOY-main** — for `manual-gate-tag` mode, enter `target-environment` and optionally `build-run-name`; if left blank, the workflow uses the latest successful BUILD from the selected branch. In `environment-approval` mode, stage 1 starts automatically after BUILD succeeds and later stages auto-chain after prior-stage success plus any required approvals; for a manual replay, `target-environment` can be left blank to start from the first configured stage, while entering a value targets a specific stage.
+
+`EXPORT.yml` commits changes back to the same branch it was run from, then sends a `repository_dispatch` event with branch and commit metadata. `BUILD.yml` listens for that dispatch and checks out the exact exported commit.
 
 ### Finding a BUILD run name for manual deploy (optional)
 
