@@ -90,6 +90,32 @@ function ConvertTo-SpectreMarkupLiteral {
     return ([string]$Text).Replace('[', '[[').Replace(']', ']]')
 }
 
+function Get-OptionalObjectPropertyValue {
+    [CmdletBinding()]
+    param(
+        [Parameter()][object]$InputObject,
+        [Parameter(Mandatory)][string]$PropertyName
+    )
+
+    if ($null -eq $InputObject) {
+        return $null
+    }
+
+    if ($InputObject -is [hashtable]) {
+        if ($InputObject.ContainsKey($PropertyName)) {
+            return $InputObject[$PropertyName]
+        }
+
+        return $null
+    }
+
+    if ($InputObject.PSObject -and $InputObject.PSObject.Properties.Name -contains $PropertyName) {
+        return $InputObject.$PropertyName
+    }
+
+    return $null
+}
+
 function Invoke-GenericStaticMethod {
     [CmdletBinding()]
     param(
@@ -1151,14 +1177,35 @@ function Select-FromMenu {
         $prompt.SearchPlaceholderText = '[grey]Start typing to filter options[/]'
     }
 
+    $effectiveDisplayItems = @()
     foreach ($item in $effectiveItems) {
-        [void]$prompt.AddChoice($item)
+        $effectiveDisplayItems += [string](ConvertTo-SpectreMarkupLiteral -Text $item)
+    }
+
+    foreach ($displayItem in $effectiveDisplayItems) {
+        [void]$prompt.AddChoice($displayItem)
     }
 
     Show-SetupStatusBarAtBottom -PromptKind 'Menu' -SearchEnabled:$prompt.SearchEnabled
 
     try {
-        $selectedValue = Show-SelectionPromptWithInterruptHandling -Prompt $prompt
+        $selectedDisplayValue = Show-SelectionPromptWithInterruptHandling -Prompt $prompt
+        Write-SetupDebug -Message "SelectionPrompt selected display value: '$selectedDisplayValue'"
+
+        $selectedEffectiveIndex = -1
+        for ($effectiveIndex = 0; $effectiveIndex -lt $effectiveDisplayItems.Count; $effectiveIndex++) {
+            if ($effectiveDisplayItems[$effectiveIndex] -ceq $selectedDisplayValue) {
+                $selectedEffectiveIndex = $effectiveIndex
+                break
+            }
+        }
+
+        if ($selectedEffectiveIndex -lt 0) {
+            Write-SetupDebug -Message "SelectionPrompt display value '$selectedDisplayValue' did not map to a known item."
+            return $null
+        }
+
+        $selectedValue = [string]$effectiveItems[$selectedEffectiveIndex]
         Write-SetupDebug -Message "SelectionPrompt selected value: '$selectedValue'"
 
         if ($singleChoiceCancelLabel -and $selectedValue -ceq $singleChoiceCancelLabel) {
@@ -1979,6 +2026,72 @@ function Set-AlmConfigSolutionsInFile {
         $insertOffset = $rootHashtable.Extent.EndOffset - 1
         $lineEnding = if ($configContent -match "`r`n") { "`r`n" } else { "`n" }
         $insertText = "$lineEnding    solutions = $solutionsArray$lineEnding"
+        $updatedContent = $configContent.Substring(0, $insertOffset) + $insertText + $configContent.Substring($insertOffset)
+    }
+
+    $hasChanges = ($updatedContent -ne $configContent)
+    if ($hasChanges) {
+        Set-Content -LiteralPath $ConfigPath -Value $updatedContent -NoNewline
+    }
+
+    return $hasChanges
+}
+
+function Set-AlmConfigSolutionCheckEnabledInFile {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ConfigPath,
+        [Parameter(Mandatory)][bool]$Enabled,
+        [Parameter()][switch]$CreateIfMissing,
+        [Parameter()][string]$TemplatePath
+    )
+
+    if (-not (Test-Path -LiteralPath $ConfigPath)) {
+        if (-not $CreateIfMissing) {
+            throw "alm-config.psd1 not found: $ConfigPath"
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($TemplatePath) -and (Test-Path -LiteralPath $TemplatePath)) {
+            Copy-Item -LiteralPath $TemplatePath -Destination $ConfigPath -Force
+        }
+        else {
+            Set-Content -LiteralPath $ConfigPath -Value "@{`n}`n" -NoNewline
+        }
+    }
+
+    $configContent = Get-Content -LiteralPath $ConfigPath -Raw
+    $enabledLiteral = if ($Enabled) { '$true' } else { '$false' }
+    $solutionCheckBlock = "@{`n        enabled = $enabledLiteral`n    }"
+
+    $tokens = $null
+    $parseErrors = $null
+    $ast = [System.Management.Automation.Language.Parser]::ParseInput($configContent, [ref]$tokens, [ref]$parseErrors)
+    if ($parseErrors -and $parseErrors.Count -gt 0) {
+        throw "Could not parse existing alm-config.psd1 '$ConfigPath': $($parseErrors[0].Message)"
+    }
+
+    $rootHashtable = $ast.Find({
+        param($node)
+        $node -is [System.Management.Automation.Language.HashtableAst]
+    }, $false)
+
+    if (-not $rootHashtable) {
+        throw "Could not find the root hashtable in '$ConfigPath'."
+    }
+
+    $solutionCheckEntry = $rootHashtable.KeyValuePairs | Where-Object {
+        $keyText = $_.Item1.Extent.Text.Trim()
+        $keyText -in @('solutionCheck', "'solutionCheck'", '"solutionCheck"')
+    } | Select-Object -First 1
+
+    if ($solutionCheckEntry) {
+        $valueExtent = $solutionCheckEntry.Item2.Extent
+        $updatedContent = $configContent.Substring(0, $valueExtent.StartOffset) + $solutionCheckBlock + $configContent.Substring($valueExtent.EndOffset)
+    }
+    else {
+        $insertOffset = $rootHashtable.Extent.EndOffset - 1
+        $lineEnding = if ($configContent -match "`r`n") { "`r`n" } else { "`n" }
+        $insertText = "$lineEnding    solutionCheck = $solutionCheckBlock$lineEnding"
         $updatedContent = $configContent.Substring(0, $insertOffset) + $insertText + $configContent.Substring($insertOffset)
     }
 

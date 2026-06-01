@@ -722,6 +722,64 @@ function Get-GitHubDeploymentEnvironmentNamesFromWorkflowContent {
     return @($names)
 }
 
+function Get-GitHubBuildEnvironmentNameFromWorkflowContent {
+    [CmdletBinding()]
+    param(
+        [Parameter()][string]$WorkflowContent
+    )
+
+    if ([string]::IsNullOrWhiteSpace($WorkflowContent)) {
+        return $null
+    }
+
+    $match = [regex]::Match($WorkflowContent, '(?mi)^\s*environment-name\s*:\s*[''\"]?(?<name>[^''\"\r\n]*)[''\"]?\s*$')
+    if (-not $match.Success) {
+        return $null
+    }
+
+    $value = [string]$match.Groups['name'].Value
+    if ([string]::IsNullOrWhiteSpace($value)) {
+        return $null
+    }
+
+    return $value.Trim()
+}
+
+function Get-SolutionCheckEnabledFromConfigContent {
+    [CmdletBinding()]
+    param(
+        [Parameter()][string]$ConfigContent
+    )
+
+    if ([string]::IsNullOrWhiteSpace($ConfigContent)) {
+        return $false
+    }
+
+    $match = [regex]::Match($ConfigContent, '(?mis)solutionCheck\s*=\s*@\{.*?\benabled\s*=\s*\$(true|false)')
+    if (-not $match.Success) {
+        return $false
+    }
+
+    return ($match.Groups[1].Value -ieq 'true')
+}
+
+function Get-GitHubBuildValidationEnabledFromRepoClone {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RepoRoot,
+        [Parameter(Mandatory)][string]$Branch
+    )
+
+    $buildWorkflowContent = Get-GitRepoFileContentFromRemoteBranch -RepoRoot $RepoRoot -Branch $Branch -RelativePath '.github/workflows/BUILD.yml'
+    $buildEnvironmentName = Get-GitHubBuildEnvironmentNameFromWorkflowContent -WorkflowContent $buildWorkflowContent
+    $hasBuildEnvironmentAssociation = -not [string]::IsNullOrWhiteSpace($buildEnvironmentName)
+
+    $almConfigContent = Get-GitRepoFileContentFromRemoteBranch -RepoRoot $RepoRoot -Branch $Branch -RelativePath 'alm-config.psd1'
+    $solutionCheckEnabled = Get-SolutionCheckEnabledFromConfigContent -ConfigContent $almConfigContent
+
+    return ($hasBuildEnvironmentAssociation -or $solutionCheckEnabled)
+}
+
 function Get-GitRepoFileContentFromRemoteBranch {
     [CmdletBinding()]
     param(
@@ -887,6 +945,7 @@ function Get-GitHubRepositoryExistingSetupState {
     $deploymentEnvironments = @()
     $deploymentBranchMappings = @()
     $storageScope = $null
+    $defaultBranchBuildValidationEnabled = Get-GitHubBuildValidationEnabledFromRepoClone -RepoRoot $RepoRoot -Branch $DefaultBranch
 
     $workflowBranchMappings = @(Get-GitHubDeployWorkflowBranchMappingsFromRepoClone -RepoRoot $RepoRoot)
     foreach ($workflowBranchMapping in $workflowBranchMappings) {
@@ -963,6 +1022,16 @@ function Get-GitHubRepositoryExistingSetupState {
         )
     }
 
+    if ($deploymentBranchMappings.Count -eq 0) {
+        $deploymentBranchMappings = @(
+            [pscustomobject]@{
+                BranchName   = $DefaultBranch
+                Environments = @()
+                SourceBranch = $DefaultBranch
+            }
+        )
+    }
+
     if (-not $storageScope -and $devEnvironment -and $devEnvironment.StorageScope) {
         $storageScope = $devEnvironment.StorageScope
     }
@@ -970,6 +1039,18 @@ function Get-GitHubRepositoryExistingSetupState {
     return [pscustomobject]@{
         SharedWorkflowRepository = $(if ($workflowReference) { $workflowReference.Repository } else { $null })
         SharedWorkflowReference  = $(if ($workflowReference) { $workflowReference.Reference } else { $null })
+        DefaultBranchBuildValidationEnabled = [bool]$defaultBranchBuildValidationEnabled
+        BuildValidationEnabled   = [bool]$defaultBranchBuildValidationEnabled
+        BuildValidationEnvironmentName = (Get-GitHubBuildEnvironmentNameFromWorkflowContent -WorkflowContent (Get-GitRepoFileContentFromRemoteBranch -RepoRoot $RepoRoot -Branch $DefaultBranch -RelativePath '.github/workflows/BUILD.yml'))
+        ExistingBuildValidationEnvironment = $(
+            $buildEnvName = Get-GitHubBuildEnvironmentNameFromWorkflowContent -WorkflowContent (Get-GitRepoFileContentFromRemoteBranch -RepoRoot $RepoRoot -Branch $DefaultBranch -RelativePath '.github/workflows/BUILD.yml')
+            if ([string]::IsNullOrWhiteSpace($buildEnvName)) {
+                $null
+            }
+            else {
+                Get-GitHubExistingEnvironmentState -Owner $RepoOwner -Repo $RepoName -EnvironmentName $buildEnvName -TenantId $TenantId
+            }
+        )
         CredentialStorageScope   = $storageScope
         DevEnvironment           = $devEnvironment
         DeploymentEnvironments   = @($deploymentEnvironments)
@@ -2844,14 +2925,87 @@ function Update-AlmConfigInRepoClone {
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][array]$Solutions,
+        [Parameter()][AllowNull()][array]$Solutions,
+        [Parameter(Mandatory)][bool]$BuildValidationEnabled,
         [Parameter(Mandatory)][string]$RepoRoot
     )
 
     $configPath = Join-Path $RepoRoot 'alm-config.psd1'
     $templatePath = if ($PSScriptRoot) { Join-Path $PSScriptRoot 'copy-to-your-repo\alm-config.psd1' } else { $null }
-    [void](Set-AlmConfigSolutionsInFile -ConfigPath $configPath -Solutions $Solutions -CreateIfMissing -TemplatePath $templatePath)
-    Write-Host "Updated alm-config.psd1 with $($Solutions.Count) solution(s)."
+
+    $effectiveSolutions = @()
+    if ($null -ne $Solutions) {
+        $effectiveSolutions = @($Solutions)
+        [void](Set-AlmConfigSolutionsInFile -ConfigPath $configPath -Solutions $effectiveSolutions -CreateIfMissing -TemplatePath $templatePath)
+    }
+    else {
+        Write-Host 'Skipping solution list updates in alm-config.psd1 because solution selection was not run.' -ForegroundColor Yellow
+    }
+
+    [void](Set-AlmConfigSolutionCheckEnabledInFile -ConfigPath $configPath -Enabled $BuildValidationEnabled -CreateIfMissing -TemplatePath $templatePath)
+    Write-Host "Updated alm-config.psd1 with $($effectiveSolutions.Count) solution(s); solutionCheck.enabled=$BuildValidationEnabled."
+}
+
+function Update-BuildWorkflowInRepoClone {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$RepoRoot,
+        [Parameter(Mandatory)][string]$SharedWorkflowRepository,
+        [Parameter(Mandatory)][string]$SharedWorkflowReference,
+        [Parameter(Mandatory)][string]$BuildEnvironmentName,
+        [Parameter(Mandatory)][bool]$BuildValidationEnabled
+    )
+
+    $buildWorkflowPath = Join-Path $RepoRoot '.github/workflows/BUILD.yml'
+    if (-not (Test-Path -LiteralPath $buildWorkflowPath)) {
+        throw "Build workflow file not found: $buildWorkflowPath"
+    }
+
+    $escapedBuildEnvironmentName = ([string]$BuildEnvironmentName).Replace("'", "''")
+
+    $environmentInput = if ($BuildValidationEnabled -and -not [string]::IsNullOrWhiteSpace($BuildEnvironmentName)) {
+        $escapedBuildEnvironmentName
+    }
+    else {
+        ''
+    }
+
+        $newContent = @"
+name: BUILD
+
+# Triggers on every push to any branch.
+# Also supports manual runs and repository_dispatch from EXPORT.
+# Packs Dataverse solutions into deployable artifacts and tags the source commit.
+#
+# See docs/usage/building-releases.md and docs/setup/github-setup.md
+
+run-name: `${{ format('{0}-{1}-{2}-{3}', github.event.repository.name, (github.event_name == 'repository_dispatch' && github.event.client_payload.branch) || github.ref_name, (github.event_name == 'repository_dispatch' && github.event.client_payload.exported_at) || github.event.head_commit.timestamp || github.event.repository.updated_at || github.run_id, github.run_number) }}
+
+on:
+    push:
+        branches:
+            - '**'
+    workflow_dispatch:
+    repository_dispatch:
+        types:
+            - alm4dataverse-export-build
+
+jobs:
+    build:
+        uses: $SharedWorkflowRepository/.github/workflows/build.yml@$SharedWorkflowReference
+        with:
+            build-name: `${{ format('{0}-{1}-{2}-{3}', github.event.repository.name, (github.event_name == 'repository_dispatch' && github.event.client_payload.branch) || github.ref_name, (github.event_name == 'repository_dispatch' && github.event.client_payload.exported_at) || github.event.head_commit.timestamp || github.event.repository.updated_at || github.run_id, github.run_number) }}
+            source-branch: `${{ (github.event_name == 'repository_dispatch' && github.event.client_payload.branch) || github.ref_name }}
+            source-ref: `${{ (github.event_name == 'repository_dispatch' && github.event.client_payload.sha) || github.sha }}
+            environment-name: '$environmentInput'
+            timeout-minutes: 360
+        permissions:
+            contents: write
+            actions: write
+            id-token: write
+"@
+
+    Set-Content -LiteralPath $buildWorkflowPath -Value $newContent.TrimStart("`r", "`n") -NoNewline
 }
 
 function Update-DeployWorkflowInRepoClone {
@@ -2871,6 +3025,11 @@ function Update-DeployWorkflowInRepoClone {
 
     $deployFilePath = Join-Path $RepoRoot ".github/workflows/DEPLOY-$Branch.yml"
 
+    $deployDirectory = Split-Path -Parent $deployFilePath
+    if (-not (Test-Path -LiteralPath $deployDirectory)) {
+        New-Item -ItemType Directory -Path $deployDirectory -Force | Out-Null
+    }
+
     if (-not $DeploymentEnvironments -or $DeploymentEnvironments.Count -eq 0) {
         if (Test-Path -LiteralPath $deployFilePath) {
             Remove-Item -LiteralPath $deployFilePath -Force
@@ -2881,10 +3040,6 @@ function Update-DeployWorkflowInRepoClone {
         }
 
         return
-    }
-
-    if (-not (Test-Path -LiteralPath $deployFilePath)) {
-        throw "Deploy workflow file not found: $deployFilePath"
     }
 
     $usesRef = "$SharedWorkflowRepository/.github/workflows/deploy.yml@$SharedWorkflowRef"
@@ -3127,9 +3282,11 @@ function Publish-GitHubBranchSetupChanges {
         [Parameter(Mandatory)][string]$SharedWorkflowRepository,
         [Parameter(Mandatory)][string]$SharedWorkflowReference,
         [Parameter(Mandatory)][string]$PromotionMode,
-        [Parameter()][array]$Solutions,
+        [Parameter()][AllowNull()][array]$Solutions,
         [Parameter()][array]$DeploymentEnvironments,
         [Parameter()][array]$DeployWorkflowBranchDefinitions,
+        [Parameter()][bool]$BuildValidationEnabled = $false,
+        [Parameter()][AllowEmptyString()][string]$BuildValidationEnvironmentName = '',
         [Parameter()][switch]$SkipDeployWorkflow
     )
 
@@ -3220,9 +3377,15 @@ function Publish-GitHubBranchSetupChanges {
             -SharedWorkflowRef $SharedWorkflowReference `
             -SkipDeployWorkflow:$SkipDeployWorkflow
 
-        if ($Solutions) {
-            Update-AlmConfigInRepoClone -Solutions @($Solutions) -RepoRoot $RepoRoot
-        }
+        Update-AlmConfigInRepoClone -Solutions $Solutions -BuildValidationEnabled $BuildValidationEnabled -RepoRoot $RepoRoot
+
+        $buildEnvironmentName = if ($BuildValidationEnabled) { [string]$BuildValidationEnvironmentName } else { '' }
+        Update-BuildWorkflowInRepoClone `
+            -RepoRoot $RepoRoot `
+            -SharedWorkflowRepository $SharedWorkflowRepository `
+            -SharedWorkflowReference $SharedWorkflowReference `
+            -BuildEnvironmentName $buildEnvironmentName `
+            -BuildValidationEnabled $BuildValidationEnabled
 
         if (-not $SkipDeployWorkflow) {
             $effectiveDeployWorkflowDefinitions = @()
@@ -3244,15 +3407,6 @@ function Publish-GitHubBranchSetupChanges {
 
                 if ([string]::IsNullOrWhiteSpace($workflowBranchName)) {
                     continue
-                }
-
-                if ($workflowBranchName -ne $ConfiguredBranch -and $workflowDeploymentEnvironments.Count -gt 0) {
-                    Copy-WorkflowTemplatesToRepo `
-                        -SourceRoot $CopyRoot `
-                        -TargetRoot $RepoRoot `
-                        -Branch $workflowBranchName `
-                        -SharedWorkflowRepository $SharedWorkflowRepository `
-                        -SharedWorkflowRef $SharedWorkflowReference
                 }
 
                 Update-DeployWorkflowInRepoClone `
@@ -3369,6 +3523,9 @@ function Invoke-GitHubBranchAwareSetup {
             SolutionResult      = $null
             SolutionSourceBranch = $null
             BranchEnvironmentMappingCompleted = $false
+            BuildValidationEnabled = [bool](Get-OptionalObjectPropertyValue -InputObject $ExistingSetupState -PropertyName 'BuildValidationEnabled')
+            BuildValidationEnvironmentName = [string](Get-OptionalObjectPropertyValue -InputObject $ExistingSetupState -PropertyName 'BuildValidationEnvironmentName')
+            BuildValidationEnvironmentConfiguration = (Get-OptionalObjectPropertyValue -InputObject $ExistingSetupState -PropertyName 'ExistingBuildValidationEnvironment')
         }
 
         Invoke-SetupWizard -Title 'GitHub Actions ALM4Dataverse setup' -Steps @(
@@ -4066,6 +4223,84 @@ function Invoke-GitHubBranchAwareSetup {
                 }
             },
             [pscustomobject]@{
+                Name = 'Configure BUILD validation'
+                Action = {
+                    Write-Section `
+                        -Message 'Configure solution validation during BUILD'
+                    Write-SetupGuidance -Lines @(
+                        'When enabled, BUILD uses one global Dataverse environment for pre-build connect/auth and solution validation.',
+                        'This is configured once and then applied across all configured branches.'
+                    ) -DocRelativePath 'docs/usage/building-releases.md' -Ref $ALM4DataverseRef -Header 'Build validation guidance'
+
+                    $enableBuildValidation = if ([bool]$wizardState.BuildValidationEnabled) {
+                        Read-YesNo -Prompt 'Enable solution validation during BUILD?'
+                    }
+                    else {
+                        Read-YesNo -Prompt 'Enable solution validation during BUILD?' -DefaultNo
+                    }
+
+                    if (-not $enableBuildValidation) {
+                        $wizardState.BuildValidationEnabled = $false
+                        $wizardState.BuildValidationEnvironmentName = ''
+                        $wizardState.BuildValidationEnvironmentConfiguration = $null
+                        return
+                    }
+
+                    $existingBuildValidationEnvironment = $wizardState.BuildValidationEnvironmentConfiguration
+                    $existingBuildValidationEnvironmentUrl = [string](Get-OptionalObjectPropertyValue -InputObject $existingBuildValidationEnvironment -PropertyName 'Url')
+                    $existingBuildValidationEnvironmentName = [string](Get-OptionalObjectPropertyValue -InputObject $existingBuildValidationEnvironment -PropertyName 'ShortName')
+                    if ([string]::IsNullOrWhiteSpace($existingBuildValidationEnvironmentName)) {
+                        $existingBuildValidationEnvironmentName = [string](Get-OptionalObjectPropertyValue -InputObject $wizardState -PropertyName 'BuildValidationEnvironmentName')
+                    }
+                    $existingBuildValidationEnvironmentCredential = Get-OptionalObjectPropertyValue -InputObject $existingBuildValidationEnvironment -PropertyName 'Credentials'
+                    $existingBuildValidationServiceAccountUPN = [string](Get-OptionalObjectPropertyValue -InputObject $existingBuildValidationEnvironment -PropertyName 'ServiceAccountUPN')
+
+                    if ($UseGitHubEnvironments) {
+                        Write-Host 'Preparing a global GitHub environment for BUILD validation.' -ForegroundColor Green
+                    }
+                    else {
+                        Write-Host 'Preparing global prefixed repo-level credentials for BUILD validation.' -ForegroundColor Green
+                    }
+                    Write-Host ''
+
+                    $selectedBuildEnvironment = Select-DataverseEnvironment -Prompt 'Select the Dataverse environment for global BUILD validation' -PreferredUrl $existingBuildValidationEnvironmentUrl
+                    if (-not $selectedBuildEnvironment) {
+                        throw 'BUILD validation was enabled, but no Dataverse environment was selected.'
+                    }
+
+                    $buildValidationEnvironmentName = Read-TextWithDefault -Prompt 'Enter the GitHub environment name for BUILD validation' -DefaultValue $(if ([string]::IsNullOrWhiteSpace($existingBuildValidationEnvironmentName)) { 'Build' } else { $existingBuildValidationEnvironmentName })
+                    if ([string]::IsNullOrWhiteSpace($buildValidationEnvironmentName)) {
+                        throw 'A GitHub environment name is required for global BUILD validation.'
+                    }
+
+                    $wizardState.BuildValidationEnvironmentName = $buildValidationEnvironmentName
+
+                    $wizardState.BuildValidationEnvironmentConfiguration = Get-GitHubEnvironmentConfiguration `
+                        -EnvironmentName $buildValidationEnvironmentName `
+                        -EnvironmentUrl (ConvertTo-NormalizedEnvironmentUrl -Url $selectedBuildEnvironment.Endpoints['WebApplication']) `
+                        -FriendlyName $selectedBuildEnvironment.FriendlyName `
+                        -ExistingCredentials $cachedCredentials `
+                        -ExistingServiceAccounts $cachedServiceAccounts `
+                        -TenantId $TenantId `
+                        -RepoName $RepoName `
+                        -ExistingCredential $existingBuildValidationEnvironmentCredential `
+                        -ExistingServiceAccountUPN $existingBuildValidationServiceAccountUPN
+
+                    if ($wizardState.BuildValidationEnvironmentConfiguration -and -not ($cachedCredentials | Where-Object { $_.ApplicationId -eq $wizardState.BuildValidationEnvironmentConfiguration.Credentials.ApplicationId -and $_.TenantId -eq $wizardState.BuildValidationEnvironmentConfiguration.Credentials.TenantId })) {
+                        $cachedCredentials += $wizardState.BuildValidationEnvironmentConfiguration.Credentials
+                    }
+                    if ($wizardState.BuildValidationEnvironmentConfiguration -and $cachedServiceAccounts -notcontains $wizardState.BuildValidationEnvironmentConfiguration.ServiceAccountUPN) {
+                        $cachedServiceAccounts += $wizardState.BuildValidationEnvironmentConfiguration.ServiceAccountUPN
+                    }
+
+                    if ($wizardState.BuildValidationEnvironmentConfiguration -and -not [string]::IsNullOrWhiteSpace([string]$wizardState.BuildValidationEnvironmentConfiguration.ShortName)) {
+                        $wizardState.BuildValidationEnvironmentName = [string]$wizardState.BuildValidationEnvironmentConfiguration.ShortName
+                    }
+
+                    $wizardState.BuildValidationEnabled = $true
+                }
+            },
+            [pscustomobject]@{
                 Name = 'Configure solutions'
                 Action = {
                     Write-Section `
@@ -4141,6 +4376,8 @@ function Invoke-GitHubBranchAwareSetup {
                         'Credential storage'       = $(if ($UseGitHubEnvironments) { 'GitHub environments' } else { 'Prefixed repository variables/secrets' })
                         'Promotion mode'           = $DeploymentPromotionMode
                         'Configured branches'      = [string]$wizardState.BranchStates.Count
+                        'BUILD validation'         = $(if ($wizardState.BuildValidationEnabled) { 'Enabled' } else { 'Disabled' })
+                        'BUILD validation environment' = $(if (-not [string]::IsNullOrWhiteSpace([string]$wizardState.BuildValidationEnvironmentName)) { [string]$wizardState.BuildValidationEnvironmentName } elseif ($wizardState.BuildValidationEnvironmentConfiguration) { $wizardState.BuildValidationEnvironmentConfiguration.ShortName } else { '<none>' })
                         'Solution source branch'   = $(if ([string]::IsNullOrWhiteSpace($wizardState.SolutionSourceBranch)) { '<none>' } else { $wizardState.SolutionSourceBranch })
                         'Solutions selected'       = [string]$(if ($wizardState.SolutionResult) { @($wizardState.SolutionResult.Solutions).Count } else { 0 })
                     })
@@ -4230,6 +4467,14 @@ function Invoke-GitHubBranchAwareSetup {
             $publishBranchStates += $removedBranchState
         }
 
+        $buildValidationEnvironmentNameForPublish = ''
+        if (-not [string]::IsNullOrWhiteSpace([string]$wizardState.BuildValidationEnvironmentName)) {
+            $buildValidationEnvironmentNameForPublish = [string]$wizardState.BuildValidationEnvironmentName
+        }
+        elseif ($wizardState.BuildValidationEnvironmentConfiguration -and -not [string]::IsNullOrWhiteSpace([string]$wizardState.BuildValidationEnvironmentConfiguration.ShortName)) {
+            $buildValidationEnvironmentNameForPublish = [string]$wizardState.BuildValidationEnvironmentConfiguration.ShortName
+        }
+
         $defaultBranchDeployWorkflowDefinitions = @()
         foreach ($configuredBranchState in @($wizardState.BranchStates)) {
             $defaultBranchDeployWorkflowDefinitions += [pscustomobject]@{
@@ -4276,6 +4521,8 @@ function Invoke-GitHubBranchAwareSetup {
                         -Solutions $solutionsForBranchPublish `
                         -DeploymentEnvironments @($branchState.DeploymentEnvironments) `
                         -DeployWorkflowBranchDefinitions $deployDefinitionsForBranchPublish `
+                        -BuildValidationEnabled ([bool]$wizardState.BuildValidationEnabled) `
+                        -BuildValidationEnvironmentName $buildValidationEnvironmentNameForPublish `
                         -SkipDeployWorkflow:$isRemovedBranch
             }
 
@@ -4293,6 +4540,9 @@ function Invoke-GitHubBranchAwareSetup {
             BranchStates         = @($wizardState.BranchStates)
             SolutionResult       = $wizardState.SolutionResult
             SolutionSourceBranch = $wizardState.SolutionSourceBranch
+            BuildValidationEnabled = [bool]$wizardState.BuildValidationEnabled
+            BuildValidationEnvironmentName = [string]$wizardState.BuildValidationEnvironmentName
+            BuildValidationEnvironmentConfiguration = $wizardState.BuildValidationEnvironmentConfiguration
             PublishResults       = @($publishResults)
         }
     }
@@ -4739,6 +4989,8 @@ $githubSetupResult = Invoke-GitHubBranchAwareSetup `
 $branchStates = @($githubSetupResult.BranchStates)
 $solutionResult = $githubSetupResult.SolutionResult
 $solutionSourceBranch = $githubSetupResult.SolutionSourceBranch
+$buildValidationEnabled = [bool](Get-OptionalObjectPropertyValue -InputObject $githubSetupResult -PropertyName 'BuildValidationEnabled')
+$buildValidationEnvironmentConfiguration = Get-OptionalObjectPropertyValue -InputObject $githubSetupResult -PropertyName 'BuildValidationEnvironmentConfiguration'
 $repoPublishResults = @($githubSetupResult.PublishResults)
 $allConfiguredEnvironments = @()
 $allDeploymentEnvironments = @()
@@ -4785,6 +5037,29 @@ else {
                 -EnableApprovals:$false
         } | Out-Null
     }
+}
+
+# ─────────────────────────────────────────────────────────────
+Write-Section `
+    -Message "Configure Global BUILD Validation Environment"
+
+if (-not $buildValidationEnabled -or -not $buildValidationEnvironmentConfiguration) {
+    [Spectre.Console.AnsiConsole]::MarkupLine('[yellow]Global BUILD validation is disabled, so BUILD environment credentials will be skipped.[/]')
+}
+else {
+    Write-Host "Applying global BUILD validation environment '$($buildValidationEnvironmentConfiguration.ShortName)'." -ForegroundColor Green
+    Write-Host ""
+
+    Invoke-WithErrorHandling -OperationName 'Applying global BUILD validation environment configuration' -AllowSkip -ScriptBlock {
+        Apply-GitHubEnvironmentConfiguration `
+            -EnvironmentConfiguration $buildValidationEnvironmentConfiguration `
+            -TenantId $TenantId `
+            -RepoOwner $repoOwner `
+            -RepoName $repoName `
+            -RepoFullName $repoFullName `
+            -UseGitHubEnvironments $useGitHubEnvironments `
+            -EnableApprovals:$false
+    } -StatusMessage 'Applying global BUILD validation environment configuration...' -CaptureOutputInPanel | Out-Null
 }
 
 # ─────────────────────────────────────────────────────────────
@@ -4838,6 +5113,8 @@ Show-SetupCompletionScreen `
         'Repository publish'      = (Get-GitHubPublishSummaryText -PublishResults $repoPublishResults)
         'Promotion mode'          = $deploymentPromotionMode
         'Credential storage'      = $(if ($useGitHubEnvironments) { 'GitHub environments' } else { 'Prefixed repository variables/secrets' })
+        'BUILD validation'        = $(if ($buildValidationEnabled) { 'Enabled' } else { 'Disabled' })
+        'BUILD validation environment' = $(if ($buildValidationEnvironmentConfiguration) { $buildValidationEnvironmentConfiguration.ShortName } else { '<none>' })
         'Configured environments' = [string]$allConfiguredEnvironments.Count
     }) `
     -NextStepLinks @(

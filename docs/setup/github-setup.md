@@ -26,6 +26,8 @@ You call them from your own repository's workflow files, which you copy from the
 | `IMPORT.yml` | `import.yml` | Build from source, import into dev Dataverse |
 | `DEPLOY-main.yml` | `deploy.yml` | Deploy artifacts to each environment |
 
+During automated setup (`setup-github.ps1`), you are also prompted whether to enable solution validation in `BUILD` globally. If enabled, setup configures one shared GitHub environment for BUILD validation and wires reusable `build.yml` to run Dataverse connect/authentication against that environment before build validation.
+
 ---
 
 ## Prerequisites
@@ -143,11 +145,24 @@ Edit `alm-config.psd1` to list the solutions you want to manage:
 ```powershell
 @{
     solutions = @(
-        @{ name = 'YourSolutionUniqueName' }
-        @{ name = 'AnotherSolution' }
+    @{ name = 'YourSolutionUniqueName' }
+    @{
+      name = 'AnotherSolution'
+      solutionCheck = @{ enabled = $true; failThreshold = 'High' }
+    }
     )
+
+  # Optional global PAC solution check settings used by BUILD.
+  solutionCheck = @{
+    enabled = $true
+    geo = 'Europe'
+    failThreshold = 'Critical'
+    maxParallel = 4
+  }
 }
 ```
+
+If solution check is enabled, BUILD authenticates PAC using managed identity / existing Azure identity context and fails clearly if no non-interactive Azure sign-in context is available.
 
 ### Configure deployment environments in `DEPLOY-main.yml`
 
